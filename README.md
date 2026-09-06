@@ -81,6 +81,8 @@ mvn test
 
 Los tests de integración levantan PostgreSQL con Testcontainers (requiere Docker en ejecución) y aplican la migración Flyway.
 
+> **Nota (daemon Docker ≥ v29)**: docker-java negocia por defecto la API v1.32, que los daemons recientes rechazan (mínima 1.40). El `pom.xml` ya fija `api.version=1.40` en surefire para resolverlo.
+
 ## Documentación
 
 La arquitectura aprobada está documentada en `docs/`:
