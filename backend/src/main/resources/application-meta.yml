@@ -1,0 +1,8 @@
+# ===== Perfil META (producción / pruebas reales) =====
+# Requiere TODAS las variables reales de Meta en el entorno:
+#   WHATSAPP_VERIFY_TOKEN, WHATSAPP_APP_SECRET, WHATSAPP_ACCESS_TOKEN,
+#   WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_WABA_ID
+# La validación completa de secretos se habilita en la Fase 7.
+whatsapp:
+  client:
+    mode: meta

@@ -1,0 +1,54 @@
+# ===== Aplicación =====
+spring:
+  application:
+    name: botwap
+  profiles:
+    default: local
+
+  # ===== Persistencia reactiva (R2DBC) =====
+  r2dbc:
+    # En local (host) se usa el mapeo 5433:5432 de docker-compose.
+    # Dentro de Docker, R2DBC_URL apunta a postgres:5432.
+    url: ${R2DBC_URL:r2dbc:postgresql://localhost:5433/botwap}
+    username: ${R2DBC_USER:botwap}
+    password: ${R2DBC_PASSWORD:botwap_dev_password}
+
+  # ===== Migraciones (Flyway). Driver JDBC SOLO para migraciones =====
+  flyway:
+    enabled: true
+    url: ${FLYWAY_DB_URL:jdbc:postgresql://localhost:5433/botwap}
+    user: ${FLYWAY_DB_USER:botwap}
+    password: ${FLYWAY_DB_PASSWORD:botwap_dev_password}
+
+server:
+  port: ${SERVER_PORT:8080}
+
+# ===== Actuator: únicamente /actuator/health =====
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+
+# ===== WhatsApp (configuración externa por variables de entorno) =====
+whatsapp:
+  client:
+    mode: ${BOT_WHATSAPP_CLIENT:mock}
+  webhook:
+    verify-token: ${WHATSAPP_VERIFY_TOKEN:dev_verify_token_placeholder}
+  api:
+    app-secret: ${WHATSAPP_APP_SECRET:}
+    access-token: ${WHATSAPP_ACCESS_TOKEN:}
+    phone-number-id: ${WHATSAPP_PHONE_NUMBER_ID:}
+    waba-id: ${WHATSAPP_WABA_ID:}
+    api-version: ${WHATSAPP_API_VERSION:v21.0}
+    base-url: ${WHATSAPP_GRAPH_BASE_URL:https://graph.facebook.com}
+
+# ===== Logging base =====
+logging:
+  level:
+    root: INFO
+    com.botwap: INFO

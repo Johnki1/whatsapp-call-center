@@ -1,0 +1,9 @@
+# ===== Perfil LOCAL (desarrollo con MockWhatsAppClient) =====
+whatsapp:
+  client:
+    mode: mock
+
+logging:
+  level:
+    com.botwap: DEBUG
+    org.springframework.r2dbc: INFO

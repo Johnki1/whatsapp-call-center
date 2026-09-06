@@ -1,0 +1,10 @@
+# ===== Perfil TEST (Testcontainers define las URLs de forma dinámica) =====
+whatsapp:
+  client:
+    mode: mock
+  webhook:
+    verify-token: test-verify-token
+
+spring:
+  flyway:
+    enabled: true

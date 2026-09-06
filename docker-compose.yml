@@ -1,0 +1,60 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: botwap_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-botwap}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-botwap_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-botwap}
+    ports:
+      # El puerto 5433 es SOLO para acceso desde el host (WSL2).
+      # Dentro de la red docker, el backend usa postgres:5432.
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - botwap-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-botwap} -d ${POSTGRES_DB:-botwap}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  backend:
+    build:
+      context: ./backend
+    container_name: botwap_backend
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-local}
+      # Conexión INTERNA a PostgreSQL (nombre del servicio = "postgres", puerto interno 5432)
+      R2DBC_URL: r2dbc:postgresql://postgres:5432/${POSTGRES_DB:-botwap}
+      R2DBC_USER: ${POSTGRES_USER:-botwap}
+      R2DBC_PASSWORD: ${POSTGRES_PASSWORD:-botwap_dev_password}
+      FLYWAY_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-botwap}
+      FLYWAY_DB_USER: ${POSTGRES_USER:-botwap}
+      FLYWAY_DB_PASSWORD: ${POSTGRES_PASSWORD:-botwap_dev_password}
+      BOT_WHATSAPP_CLIENT: ${BOT_WHATSAPP_CLIENT:-mock}
+      WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-change_me_webhook_verify_token}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - botwap-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/actuator/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  pgdata:
+
+networks:
+  botwap-network:
+    driver: bridge

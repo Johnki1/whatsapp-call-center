@@ -1,0 +1,55 @@
+# ===== Sistema operativo =====
+.DS_Store
+Thumbs.db
+
+# ===== IDE =====
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+out/
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Eclipse / NetBeans
+.project
+.classpath
+.settings/
+.nbproject/
+nbproject/
+
+# ===== Java / Maven =====
+target/
+*.class
+*.jar
+*.war
+*.ear
+hs_err_pid*
+replay_pid*
+dependency-reduce-pom.xml
+.mvn/timing.properties
+
+# ===== WSL / Logs =====
+*.log
+logs/
+*.log.*
+
+# ===== Spring Boot =====
+spring-boot-*/target/
+
+# ===== Docker =====
+docker-compose.override.yml
+.dockerignore-bak
+
+# ===== Secretos y entorno =====
+.env
+.env.*
+!.env.example
+
+# ===== Temporales =====
+*.tmp
+*.swp
+*~
+.attach_pid*
