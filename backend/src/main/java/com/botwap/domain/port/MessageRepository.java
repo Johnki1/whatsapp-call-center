@@ -20,6 +20,11 @@ public interface MessageRepository {
 
     Mono<Boolean> existsByWaMessageId(String waMessageId);
 
-    /** Si afecta 0 filas, el mensaje ya fue procesado (deduplicación). */
-    Mono<Boolean> markReceivedAsProcessed(UUID messageId, String waMessageId);
+    /**
+     * Transición idempotente {@code RECEIVED → PROCESSED}: si afecta 0 filas,
+     * el mensaje ya fue procesado (devuelve {@code false}). Materializa la
+     * deduplicación ante reintentos del webhook
+     * (docs/DATABASE_DESIGN.md § 3.1).
+     */
+    Mono<Boolean> markReceivedAsProcessed(UUID messageId);
 }
