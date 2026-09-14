@@ -47,6 +47,15 @@ whatsapp:
     api-version: ${WHATSAPP_API_VERSION:v21.0}
     base-url: ${WHATSAPP_GRAPH_BASE_URL:https://graph.facebook.com}
 
+# ===== OutboxPoller (Fase 6) =====
+app:
+  outbox:
+    enabled: true
+    poll-interval-ms: 5000
+    lease-duration-seconds: 60
+    max-attempts: 3
+    backoff-base-seconds: 1
+
 # ===== Logging base =====
 logging:
   level:

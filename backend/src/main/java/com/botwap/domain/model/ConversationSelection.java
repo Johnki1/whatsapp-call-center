@@ -1,16 +1,19 @@
 package com.botwap.domain.model;
 
 import java.time.Instant;
-import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 
 /**
- * Selección de una opción en un nivel de la conversación.
+ * Seleccion de una opcion en un nivel de la conversacion.
  *
  * <p>Una fila por nivel navegado (tabla {@code conversation_selection},
- * única por {@code (conversation_id, level)}). La navegación de vuelta
- * hace <em>upsert</em> del nivel.</p>
+ * unica por {@code (conversation_id, level)}). La navegacion de vuelta
+ * hace upsert del nivel.</p>
+ *
+ * <p>El {@code metadata} es un JSON serializado (columna JSONB) que permite
+ * almacenar informacion adicional por seleccion sin cambiar el esquema
+ * (ej. tipo de documento, numero enmascarado).</p>
  */
 public record ConversationSelection(
         UUID id,
@@ -19,27 +22,50 @@ public record ConversationSelection(
         String stateKey,
         String optionKey,
         String displayLabel,
-        Map<String, String> metadata,
+        String metadata,
         Instant selectedAt) {
 
     public ConversationSelection {
-        Objects.requireNonNull(id, "id");
-        Objects.requireNonNull(conversationId, "conversationId");
         Objects.requireNonNull(stateKey, "stateKey");
         Objects.requireNonNull(optionKey, "optionKey");
         Objects.requireNonNull(displayLabel, "displayLabel");
-        Objects.requireNonNull(selectedAt, "selectedAt");
     }
 
-    /** Crea una selección sin metadatos adicionales. */
+    /**
+     * Crea una seleccion preliminar (pre-persistencia): el {@code id},
+     * {@code conversationId} y {@code selectedAt} se completan al momento
+     * de persistir (el repositorio genera el UUID y el orquestador asigna
+     * la conversacion y el timestamp).
+     */
+    public static ConversationSelection unpersisted(int level, String stateKey,
+                                                    String optionKey, String displayLabel,
+                                                    String metadata) {
+        return new ConversationSelection(null, null, level, stateKey, optionKey,
+                displayLabel, metadata, null);
+    }
+
+    /**
+     * Crea una seleccion ya asociada a una conversacion (usado por tests y
+     * codigo que ya conoce el id de conversacion).
+     */
     public static ConversationSelection of(UUID conversationId, int level, String stateKey,
                                            String optionKey, String displayLabel) {
         return new ConversationSelection(UUID.randomUUID(), conversationId, level, stateKey,
-                optionKey, displayLabel, Map.of(), Instant.now());
+                optionKey, displayLabel, "{}", Instant.now());
     }
 
-    public ConversationSelection withMetadata(Map<String, String> extraMetadata) {
+    public ConversationSelection withMetadata(String metadataJson) {
         return new ConversationSelection(id, conversationId, level, stateKey, optionKey,
-                displayLabel, extraMetadata == null ? Map.of() : Map.copyOf(extraMetadata), selectedAt);
+                displayLabel, metadataJson == null ? "{}" : metadataJson, selectedAt);
+    }
+
+    public ConversationSelection withConversationId(UUID convId) {
+        return new ConversationSelection(id, convId, level, stateKey, optionKey,
+                displayLabel, metadata, selectedAt);
+    }
+
+    public ConversationSelection withSelectedAt(Instant newSelectedAt) {
+        return new ConversationSelection(id, conversationId, level, stateKey, optionKey,
+                displayLabel, metadata, newSelectedAt);
     }
 }

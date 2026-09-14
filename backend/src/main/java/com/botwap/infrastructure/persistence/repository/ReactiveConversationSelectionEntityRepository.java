@@ -35,8 +35,7 @@ public interface ReactiveConversationSelectionEntityRepository
                 (id, conversation_id, level, state_key, option_key, display_label, metadata, selected_at)
             VALUES (:id, :conversationId, :level, :stateKey, :optionKey, :displayLabel,
                     CAST(:metadata AS JSONB), :selectedAt)
-            ON CONFLICT (conversation_id, level) DO UPDATE SET
-                state_key = EXCLUDED.state_key,
+            ON CONFLICT (conversation_id, level, state_key) DO UPDATE SET
                 option_key = EXCLUDED.option_key,
                 display_label = EXCLUDED.display_label,
                 metadata = EXCLUDED.metadata,

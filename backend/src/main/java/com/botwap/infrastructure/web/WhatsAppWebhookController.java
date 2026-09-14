@@ -1,6 +1,12 @@
 package com.botwap.infrastructure.web;
 
+import com.botwap.application.service.InboundMessageOrchestrator;
 import com.botwap.config.WhatsAppProperties;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -13,34 +19,44 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 
 /**
  * Endpoint de entrada de la WhatsApp Cloud API de Meta.
  *
  * <ul>
- *   <li>{@code GET /webhook/whatsapp}: verificación inicial del webhook (challenge).</li>
- *   <li>{@code POST /webhook/whatsapp}: recepción de eventos (mensajes del usuario).</li>
+ *   <li>{@code GET /webhook/whatsapp}: verificacion inicial del webhook (challenge).</li>
+ *   <li>{@code POST /webhook/whatsapp}: recepcion de eventos (mensajes del usuario).</li>
  * </ul>
- *
- * <p>El POST es un <strong>esqueleto</strong>: el procesamiento real de la Fase A
- * (verificación de firma, extracción {@code wa_id}/{@code wamid}/texto y
- * orquestación) se implementa en la Fase 4 conforme a docs/ARCHITECTURE.md § 7.</p>
  */
 @RestController
 @RequestMapping("/webhook/whatsapp")
 public class WhatsAppWebhookController {
 
+    private static final Logger log = LoggerFactory.getLogger(WhatsAppWebhookController.class);
+
     private static final String SIGNATURE_HEADER = "X-Hub-Signature-256";
+    private static final String FIELD_MESSAGES = "messages";
+    private static final String MESSAGE_TYPE_TEXT = "text";
 
     private final WhatsAppProperties properties;
+    private final WebhookSignatureVerifier signatureVerifier;
+    private final InboundMessageOrchestrator orchestrator;
+    private final ObjectMapper objectMapper;
 
-    public WhatsAppWebhookController(WhatsAppProperties properties) {
+    public WhatsAppWebhookController(WhatsAppProperties properties,
+                                     WebhookSignatureVerifier signatureVerifier,
+                                     InboundMessageOrchestrator orchestrator,
+                                     ObjectMapper objectMapper) {
         this.properties = properties;
+        this.signatureVerifier = signatureVerifier;
+        this.orchestrator = orchestrator;
+        this.objectMapper = objectMapper;
     }
 
     /**
-     * Verificación del webhook solicitada por Meta al configurarlo.
+     * Verificacion del webhook solicitada por Meta al configurarlo.
      *
      * @return 200 con el {@code hub.challenge} si el token coincide; 403 en caso contrario.
      */
@@ -59,20 +75,97 @@ public class WhatsAppWebhookController {
     }
 
     /**
-     * Recepción de eventos de Meta.
+     * Recepcion de eventos de Meta.
      *
-     * @param rawBody   body crudo del payload (necesario para validar la firma en Fase 4)
-     * @param signature header {@value SIGNATURE_HEADER} con la firma HMAC-SHA256
+     * <p>Flujo:
+     * 1. Verifica la firma HMAC-SHA256 (400 si no coincide).
+     * 2. Extrae wa_id / wamid / texto (ignora {@code statuses} y no-texto).
+     * 3. Delega en {@link InboundMessageOrchestrator} y responde 200 tras el COMMIT.</p>
+     *
+     * @param payloadBytes body crudo del payload (necesario para validar la firma).
+     * @param signature    header {@value SIGNATURE_HEADER} con la firma HMAC-SHA256.
      */
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
     public Mono<ResponseEntity<Void>> receive(
-            @RequestBody Mono<String> rawBody,
-            @RequestHeader(value = SIGNATURE_HEADER, required = false) String signature) {
+            @RequestHeader(value = SIGNATURE_HEADER, required = false) String signature,
+            @RequestBody byte[] payloadBytes) {
 
-        // TODO FASE 4:
-        //  1. Verificar firma con WebhookSignatureVerifier (400 si no coincide).
-        //  2. Extraer wa_id / wamid / texto (ignorar statuses y no-texto).
-        //  3. Delegar en InboundMessageOrchestrator y responder 200 tras el COMMIT.
-        return rawBody.then(Mono.just(ResponseEntity.ok().<Void>build()));
+        String rawBody = new String(payloadBytes, StandardCharsets.UTF_8);
+        log.info("Webhook recibido ({} bytes)", payloadBytes.length);
+
+        return signatureVerifier.verify(signature, rawBody)
+                .flatMap(valid -> {
+                    if (!valid) {
+                        return Mono.just(ResponseEntity.status(HttpStatus.BAD_REQUEST).<Void>build());
+                    }
+                    return extractInbound(rawBody)
+                            .flatMap(extracted -> {
+                                log.info("Procesando mensaje inbound: wa_id={}, wamid={}",
+                                        extracted.waId(), extracted.wamid());
+                                return orchestrator.processInbound(extracted.waId(), extracted.wamid(), extracted.text())
+                                        .thenReturn(ResponseEntity.ok().<Void>build());
+                            })
+                            .switchIfEmpty(Mono.defer(() -> {
+                                log.info("Webhook ack: no contiene mensajes de texto procesables");
+                                return Mono.just(ResponseEntity.ok().<Void>build());
+                            }));
+                })
+                .onErrorResume(e -> {
+                    log.error("Error procesando webhook", e);
+                    return Mono.just(ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).<Void>build());
+                });
+    }
+
+    /**
+     * Extrae el primer mensaje de texto del payload de WhatsApp.
+     *
+     * @return {@code Mono<ExtractedMessage>} con wa_id, wamid y texto, o vacío si
+     *         el payload no contiene mensajes de texto (p. ej. solo {@code statuses}).
+     */
+    private Mono<ExtractedMessage> extractInbound(String rawBody) {
+        try {
+            JsonNode root = objectMapper.readTree(rawBody);
+            JsonNode entries = root.path("entry");
+            if (!entries.isArray() || entries.isEmpty()) {
+                return Mono.empty();
+            }
+
+            JsonNode changes = entries.get(0).path("changes");
+            if (!changes.isArray() || changes.isEmpty()) {
+                return Mono.empty();
+            }
+
+            JsonNode value = changes.get(0).path("value");
+            if (!FIELD_MESSAGES.equals(changes.get(0).path("field").asText())) {
+                return Mono.empty();
+            }
+
+            JsonNode messages = value.path("messages");
+            if (!messages.isArray() || messages.isEmpty()) {
+                return Mono.empty();
+            }
+
+            JsonNode msg = messages.get(0);
+            if (!MESSAGE_TYPE_TEXT.equals(msg.path("type").asText())) {
+                return Mono.empty();
+            }
+
+            String waId = msg.path("from").asText(null);
+            String wamid = msg.path("id").asText(null);
+            String text = msg.path("text").path("body").asText(null);
+
+            if (waId == null || wamid == null || text == null) {
+                return Mono.empty();
+            }
+
+            return Mono.just(new ExtractedMessage(waId, wamid, text));
+        } catch (JsonProcessingException e) {
+            log.warn("No se pudo parsear el payload del webhook", e);
+            return Mono.error(e);
+        }
+    }
+
+    /** Resultado de la extraccion de un mensaje inbound del payload de WhatsApp. */
+    private record ExtractedMessage(String waId, String wamid, String text) {
     }
 }

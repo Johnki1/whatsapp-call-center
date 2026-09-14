@@ -1,24 +1,56 @@
+# ============================================================
+# BotWap — WhatsApp Call Center Bot
+# Reglas de exclusión de Git.
+#
+# Criterio:
+#   - SE VERSIONA todo lo necesario para construir, probar y desplegar:
+#     código fuente, tests, pom.xml, Dockerfile, docker-compose.yml,
+#     migraciones Flyway, documentación y ficheros "*.example".
+#   - NUNCA se versionan secretos, claves privadas, estado local de
+#     herramientas ni artefactos generados automáticamente.
+#
+# OJO: en Git la última regla que coincide gana. Por eso las excepciones
+# ("!...") van SIEMPRE después de la regla de exclusión que corrigen.
+# ============================================================
+
 # ===== Sistema operativo =====
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
 Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+Desktop.ini
+desktop.ini
+$RECYCLE.BIN/
+*.lnk
 
-# ===== IDE =====
+# ===== IDE / editor =====
 # IntelliJ IDEA
 .idea/
 *.iml
 *.iws
+*.ipr
 out/
 
-# VS Code
-.vscode/
-*.code-workspace
-
 # Eclipse / NetBeans
-.project
 .classpath
+.project
 .settings/
+.factorypath
+.apt_generated/
 .nbproject/
 nbproject/
+
+# Visual Studio Code
+# Se ignora la configuración local del editor; estos dos ficheros se
+# permiten explícitamente por si el equipo decide versionarlos.
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+*.code-workspace
 
 # ===== Java / Maven =====
 target/
@@ -28,28 +60,175 @@ target/
 *.ear
 hs_err_pid*
 replay_pid*
-dependency-reduce-pom.xml
+.attach_pid*
+dependency-reduced-pom.xml
 .mvn/timing.properties
-
-# ===== WSL / Logs =====
-*.log
-logs/
-*.log.*
+# Excepción: la Maven Wrapper JAR debe versionarse si se añade el wrapper.
+!.mvn/wrapper/maven-wrapper.jar
 
 # ===== Spring Boot =====
-spring-boot-*/target/
+# Solo salidas locales en tiempo de ejecución.
+# application.yml y application-*.yml SÍ se versionan: los secretos
+# reales entran por variables de entorno (ver .env.example).
+*.pid
 
-# ===== Docker =====
-docker-compose.override.yml
-.dockerignore-bak
+# ===== Logs =====
+*.log
+*.log.*
+logs/
 
-# ===== Secretos y entorno =====
+# ===== Archivos temporales =====
+*.tmp
+*.temp
+*.swp
+*.swo
+*.orig
+*.rej
+*~
+
+# ===== Variables de entorno y secretos =====
+# Nunca se versionan valores reales; sí su plantilla de ejemplo.
 .env
 .env.*
 !.env.example
+!.env.*.example
 
-# ===== Temporales =====
-*.tmp
-*.swp
-*~
-.attach_pid*
+# Ficheros de secretos locales
+*.secret
+*.secrets
+credentials.json
+service-account*.json
+
+# ===== WhatsApp / Meta — tokens y credenciales =====
+# El access token, el app secret y el verify token se inyectan SIEMPRE
+# por variables de entorno (ver .env.example) y nunca se versionan:
+# quedan cubiertos por las reglas genéricas ".env", "*.secret" y "*.secrets".
+# No se añaden aquí nombres de fichero inventados a propósito.
+
+# ===== Docker =====
+# docker-compose.yml, Dockerfile y todo lo necesario para construir las
+# imágenes SÍ se versionan. Solo se ignoran los overrides locales.
+docker-compose.override.yml
+docker-compose.override.yaml
+docker-compose.local.yml
+docker-compose.local.yaml
+compose.override.yml
+compose.override.yaml
+
+# ===== SSH / certificados / claves privadas =====
+# Nunca se versiona material criptográfico privado.
+# (La documentación que explica cómo generarlas no se ve afectada.)
+*.pem
+*.key
+*.p12
+*.pfx
+*.pkcs12
+*.jks
+*.keystore
+*.ppk
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+id_ecdsa
+id_ecdsa.*
+id_dsa
+id_dsa.*
+
+# ===== Terraform (infraestructura futura) =====
+# Los ficheros *.tf SÍ se versionan; el estado y las variables reales NO.
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfplan
+terraform.tfvars
+terraform.tfvars.json
+!.terraform.tfvars.example
+!*.tfvars.example
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+# NOTA: .terraform.lock.hcl SE VERSIONA a propósito (fija las versiones y
+# los hashes de los providers para que la infra sea reproducible entre
+# máquinas y en CI). Por eso NO se añade ninguna regla sobre él.
+
+# ===== Ansible (infraestructura futura) =====
+# Playbooks, roles e inventarios de ejemplo SÍ se versionan.
+*.retry
+# Contraseñas de Ansible Vault (nunca se versionan)
+.vault_pass
+.vault_pass.txt
+vault_pass
+vault_pass.txt
+vault-password
+vault-password.txt
+.vault-password
+.vault-password.txt
+# Inventario local real (IPs/datos sensibles). Los de ejemplo SÍ se versionan.
+**/inventory/hosts
+**/inventory/hosts.ini
+**/inventory/hosts.local
+**/inventory/hosts.local.ini
+!**/inventory/hosts.example
+!**/inventory/hosts.example.ini
+
+# ===== Azure (CLI / credenciales locales) =====
+# Configuración local del CLI de Azure: fuera del repositorio.
+# Los secretos de producción viven en Azure Key Vault, no en el repo.
+.azure/
+
+# ===== Cobertura / reportes de tests =====
+# Solo artefactos generados; el código de test (src/test) SÍ se versiona.
+jacoco/
+jacoco.exec
+*.exec
+*.lcov
+coverage/
+
+# ===== Node / frontend (futuro) =====
+# No se ignoran package.json ni los lockfiles
+# (package-lock.json, yarn.lock, pnpm-lock.yaml se versionan).
+node_modules/
+dist/
+build/
+.npm/
+.pnpm-store/
+.yarn/
+.nuxt/
+.next/
+.vite/
+*.tsbuildinfo
+.eslintcache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ===== Python (scripts auxiliares futuros) =====
+# Solo artefactos generados; el código fuente (*.py) SÍ se versiona.
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+ENV/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ===== Dumps y respaldos locales =====
+# Las migraciones Flyway versionadas (*.sql en
+# src/main/resources/db/migration) NO se ven afectadas.
+*.sql.gz
+*.sql.bz2
+*.dump
+*.bak
+*.bak.*
+dumps/

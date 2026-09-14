@@ -57,9 +57,11 @@ CREATE TABLE conversation_selection (
     CONSTRAINT ck_selection_level CHECK (level BETWEEN 1 AND 5)
 );
 
--- Un nivel, una selección: navegar de vuelta hace upsert.
-CREATE UNIQUE INDEX uq_selection_conversation_level
-    ON conversation_selection (conversation_id, level);
+-- Una selección por (conversación, nivel, estado): permite varias selecciones
+-- en el mismo nivel con distintos state_key (ej. nivel 4: IDENTIFICATION_MENU +
+-- DOCUMENT_INPUT), y actualiza al navegar de vuelta en un mismo estado.
+CREATE UNIQUE INDEX uq_selection_conversation_level_state
+    ON conversation_selection (conversation_id, level, state_key);
 
 -- Consultas por conversación.
 CREATE INDEX idx_selection_conversation

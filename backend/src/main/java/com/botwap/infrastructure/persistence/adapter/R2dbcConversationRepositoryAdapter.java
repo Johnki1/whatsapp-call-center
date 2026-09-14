@@ -10,6 +10,8 @@ import com.botwap.infrastructure.persistence.entity.ConversationEntity;
 import com.botwap.infrastructure.persistence.repository.ReactiveConversationEntityRepository;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Component;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Mono;
 
 import java.time.Instant;
@@ -19,12 +21,14 @@ import java.util.UUID;
 /**
  * Adaptador R2DBC del puerto {@link ConversationRepository}.
  *
- * <p>La persistencia es explícita (SQL): el {@code save} inserta si la fila no
- * existe o actualiza con control de versión (optimistic lock) si existe, de
- * modo que la transición de estado siempre es segura ante concurrencia.</p>
+ * <p>La persistencia es explícita (SQL): {@code insert} crea una nueva fila,
+ * {@code update} actualiza con control de versión (optimistic lock) de modo
+ * que la transición de estado siempre es segura ante concurrencia.</p>
  */
 @Component
 public class R2dbcConversationRepositoryAdapter implements ConversationRepository {
+
+    private static final Logger log = LoggerFactory.getLogger(R2dbcConversationRepositoryAdapter.class);
 
     private final ReactiveConversationEntityRepository repository;
 
@@ -48,42 +52,44 @@ public class R2dbcConversationRepositoryAdapter implements ConversationRepositor
     }
 
     @Override
-    public Mono<Conversation> save(Conversation conversation) {
-        return repository.findById(conversation.id())
-                .flatMap(existing -> update(conversation))
-                .switchIfEmpty(insert(conversation));
-    }
-
-    private Mono<Conversation> insert(Conversation c) {
+    public Mono<Conversation> insert(Conversation conversation) {
+        log.warn("DIAG save: INSERT branch, id={} newState={}", conversation.id(), conversation.state());
         return repository.insertConversation(
-                        c.id(),
-                        c.waId(),
-                        c.state().name(),
-                        c.status().name(),
+                        conversation.id(),
+                        conversation.waId(),
+                        conversation.state().name(),
+                        conversation.status().name(),
                         0L,
-                        toOffset(c.createdAt()),
-                        toOffset(c.updatedAt()),
-                        toOffsetOrNull(c.closedAt()))
-                .map(rows -> c.withVersion(0L))
+                        toOffset(conversation.createdAt()),
+                        toOffset(conversation.updatedAt()),
+                        toOffsetOrNull(conversation.closedAt()))
+                .map(rows -> conversation.withVersion(0L))
                 .onErrorMap(DataIntegrityViolationException.class,
                         e -> new DomainException("No se pudo crear la conversación (¿ya existe una activa?)", e));
     }
 
-    private Mono<Conversation> update(Conversation c) {
-        long newVersion = c.version() + 1;
+    @Override
+    public Mono<Conversation> update(Conversation conversation) {
+        log.warn("DIAG save: UPDATE branch, id={} newState={} version={}",
+                conversation.id(), conversation.state(), conversation.version());
+        long newVersion = conversation.version() + 1;
         Instant now = Instant.now();
         return repository.updateConversation(
-                        c.id(),
-                        c.state().name(),
-                        c.status().name(),
+                        conversation.id(),
+                        conversation.state().name(),
+                        conversation.status().name(),
                         newVersion,
                         toOffset(now),
-                        toOffsetOrNull(c.closedAt()),
-                        c.version())
-                .flatMap(rows -> rows == 1
-                        ? Mono.just(new Conversation(c.id(), c.waId(), c.state(), c.status(),
-                                newVersion, c.createdAt(), now, c.closedAt()))
-                        : Mono.error(new ConcurrencyConflictException(c.id())));
+                        toOffsetOrNull(conversation.closedAt()),
+                        conversation.version())
+                .flatMap(rows -> {
+                    log.warn("DIAG update: id={} rows={} newState={} expectedVersion={}",
+                            conversation.id(), rows, conversation.state(), conversation.version());
+                    return rows == 1
+                            ? Mono.just(new Conversation(conversation.id(), conversation.waId(), conversation.state(), conversation.status(),
+                                    newVersion, conversation.createdAt(), now, conversation.closedAt()))
+                            : Mono.error(new ConcurrencyConflictException(conversation.id()));
+                });
     }
 
     private Conversation toDomain(ConversationEntity e) {

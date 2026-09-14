@@ -28,8 +28,14 @@ public interface ConversationRepository {
     Mono<Conversation> findActiveByWaIdForUpdate(String waId);
 
     /**
-     * Persiste la conversación: inserta si la fila no existe o actualiza con
-     * control de versión (optimistic lock) si existe.
+     * Inserta una conversación nueva.
+     * @throws DomainException si ya existe una conversación activa para el mismo wa_id
      */
-    Mono<Conversation> save(Conversation conversation);
+    Mono<Conversation> insert(Conversation conversation);
+
+    /**
+     * Actualiza una conversación existente con control de versión (optimistic lock).
+     * @throws ConcurrencyConflictException si la versión esperada no coincide
+     */
+    Mono<Conversation> update(Conversation conversation);
 }

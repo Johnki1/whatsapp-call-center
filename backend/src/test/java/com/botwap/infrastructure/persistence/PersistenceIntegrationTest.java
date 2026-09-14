@@ -69,7 +69,7 @@ class PersistenceIntegrationTest extends BaseIntegrationTest {
 
     @Test
     void savesAndFindsActiveConversation() {
-        Conversation saved = conversationRepository.save(Conversation.newActive(WA_A)).block();
+        Conversation saved = conversationRepository.insert(Conversation.newActive(WA_A)).block();
 
         assertThat(saved).isNotNull();
         assertThat(saved.version()).isZero();
@@ -85,28 +85,28 @@ class PersistenceIntegrationTest extends BaseIntegrationTest {
 
     @Test
     void rejectsSecondActiveConversationForSameWaId() {
-        conversationRepository.save(Conversation.newActive(WA_A)).block();
+        conversationRepository.insert(Conversation.newActive(WA_A)).block();
 
         // El índice único parcial (wa_id) WHERE status='ACTIVE' impide dos activas.
-        StepVerifier.create(conversationRepository.save(Conversation.newActive(WA_A)))
+        StepVerifier.create(conversationRepository.insert(Conversation.newActive(WA_A)))
                 .expectErrorMatches(e -> e instanceof DomainException)
                 .verify();
     }
 
     @Test
     void optimisticLockDetectsConcurrentUpdate() {
-        conversationRepository.save(Conversation.newActive(WA_A)).block();
+        conversationRepository.insert(Conversation.newActive(WA_A)).block();
         Conversation reloaded = conversationRepository.findActiveByWaId(WA_A).block();
 
         // Actualización correcta (versión esperada = 0).
         Conversation updated = conversationRepository
-                .save(reloaded.withState(ConversationState.PURCHASE_MENU))
+                .update(reloaded.withState(ConversationState.PURCHASE_MENU))
                 .block();
         assertThat(updated.version()).isEqualTo(1L);
 
         // Actualización con versión obsoleta (0) sobre la fila ya versionada (1).
         StepVerifier.create(conversationRepository
-                        .save(reloaded.withState(ConversationState.RECHARGE_MENU)))
+                        .update(reloaded.withState(ConversationState.RECHARGE_MENU)))
                 .expectErrorMatches(e -> e instanceof ConcurrencyConflictException)
                 .verify();
     }
@@ -117,7 +117,7 @@ class PersistenceIntegrationTest extends BaseIntegrationTest {
 
     @Test
     void selectionIsUpsertedByLevel() {
-        Conversation conversation = conversationRepository.save(Conversation.newActive(WA_A)).block();
+        Conversation conversation = conversationRepository.insert(Conversation.newActive(WA_A)).block();
 
         selectionRepository.save(ConversationSelection.of(
                         conversation.id(), 1, "MAIN_MENU", "PURCHASE", "Compra de paquetes"))
@@ -151,7 +151,7 @@ class PersistenceIntegrationTest extends BaseIntegrationTest {
 
     @Test
     void markReceivedAsProcessedIsIdempotent() {
-        Conversation conversation = conversationRepository.save(Conversation.newActive(WA_A)).block();
+        Conversation conversation = conversationRepository.insert(Conversation.newActive(WA_A)).block();
         Message inbound = messageRepository
                 .save(Message.inbound(conversation.id(), "wamid-abc", "hola"))
                 .block();
@@ -170,7 +170,7 @@ class PersistenceIntegrationTest extends BaseIntegrationTest {
 
     @Test
     void duplicateWamidIsRejectedAndDetected() {
-        Conversation conversation = conversationRepository.save(Conversation.newActive(WA_A)).block();
+        Conversation conversation = conversationRepository.insert(Conversation.newActive(WA_A)).block();
 
         messageRepository.save(Message.inbound(conversation.id(), "wamid-unico", "hola")).block();
 
@@ -191,7 +191,7 @@ class PersistenceIntegrationTest extends BaseIntegrationTest {
 
     @Test
     void outboxClaimsPendingOnceAndRecoversExpiredLease() {
-        Conversation conversation = conversationRepository.save(Conversation.newActive(WA_A)).block();
+        Conversation conversation = conversationRepository.insert(Conversation.newActive(WA_A)).block();
         Message outbound = messageRepository
                 .save(Message.outboundPending(conversation.id(), "respuesta"))
                 .block();
@@ -200,11 +200,11 @@ class PersistenceIntegrationTest extends BaseIntegrationTest {
                         outbound.id(), conversation.id(), WA_A, "{\"text\":\"respuesta\"}", Instant.now()))
                 .block();
 
-        // Primer reclamo: PENDING → SENDING (lease activo).
+        // Primer reclamo: PENDING → SENDING (lease activo, attempts incrementado a 1).
         StepVerifier.create(outboxRepository.claimPending(5, false))
                 .assertNext(claimed -> {
                     assertThat(claimed.status()).isEqualTo(OutboxStatus.SENDING);
-                    assertThat(claimed.attempts()).isZero();
+                    assertThat(claimed.attempts()).isEqualTo((short) 1);
                     assertThat(claimed.leaseExpiresAt()).isNotNull();
                 })
                 .verifyComplete();
@@ -240,10 +240,10 @@ class PersistenceIntegrationTest extends BaseIntegrationTest {
     @Test
     void forUpdateRunsInsideTransaction() {
         transactionalOperator.execute(tx ->
-                        conversationRepository.save(Conversation.newActive(WA_A))
+                        conversationRepository.insert(Conversation.newActive(WA_A))
                                 .then(conversationRepository.findActiveByWaIdForUpdate(WA_A))
                                 .flatMap(locked -> conversationRepository
-                                        .save(locked.withState(ConversationState.PURCHASE_MENU))))
+                                        .update(locked.withState(ConversationState.PURCHASE_MENU))))
                 .then()
                 .as(StepVerifier::create)
                 .verifyComplete();

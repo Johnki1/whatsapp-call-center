@@ -1,5 +1,6 @@
 package com.botwap.infrastructure.persistence.adapter;
 
+import com.botwap.config.OutboxProperties;
 import com.botwap.domain.model.OutboxMessage;
 import com.botwap.domain.model.OutboxStatus;
 import com.botwap.domain.port.OutboxRepository;
@@ -24,17 +25,24 @@ import java.util.UUID;
  * {@code FOR UPDATE SKIP LOCKED} (atómico) y fija un lease de envío; las filas
  * {@code SENDING} con el lease vencido se recuperan en futuros reclamos
  * (crash recovery).</p>
+ *
+ * <p>Fase 6: se agregan métodos para marcar SENT, FAILED y programar
+ * reintentos con backoff exponencial. El lease duration es configurable
+ * mediante {@link OutboxProperties#getLeaseDurationSeconds()}.</p>
  */
 @Component
 public class R2dbcOutboxRepositoryAdapter implements OutboxRepository {
 
     private final ReactiveOutboxEntityRepository repository;
     private final DatabaseClient databaseClient;
+    private final OutboxProperties outboxProperties;
 
     public R2dbcOutboxRepositoryAdapter(ReactiveOutboxEntityRepository repository,
-                                        DatabaseClient databaseClient) {
+                                        DatabaseClient databaseClient,
+                                        OutboxProperties outboxProperties) {
         this.repository = repository;
         this.databaseClient = databaseClient;
+        this.outboxProperties = outboxProperties;
     }
 
     @Override
@@ -63,10 +71,12 @@ public class R2dbcOutboxRepositoryAdapter implements OutboxRepository {
 
     @Override
     public Flux<OutboxMessage> claimPending(int limit, boolean includeLeaseExpired) {
+        long leaseSeconds = outboxProperties.leaseDurationSeconds();
         return databaseClient.sql("""
                         UPDATE outbox_message
                         SET status = 'SENDING',
-                            lease_expires_at = now() + interval '60 seconds',
+                            attempts = attempts + 1,
+                            lease_expires_at = now() + interval '%d seconds',
                             updated_at = now()
                         WHERE id IN (
                             SELECT id FROM outbox_message
@@ -80,11 +90,73 @@ public class R2dbcOutboxRepositoryAdapter implements OutboxRepository {
                                   CAST(payload AS TEXT) AS payload,
                                   status, attempts, next_attempt_at, lease_expires_at, last_error,
                                   created_at, updated_at, sent_at
-                        """)
+                        """.formatted(leaseSeconds))
                 .bind("limit", limit)
                 .bind("includeExpired", includeLeaseExpired)
                 .map((row, rowMetadata) -> toDomain(row))
                 .all();
+    }
+
+    @Override
+    public Mono<Long> markSent(UUID id, Instant sentAt) {
+        return databaseClient.sql("""
+                        UPDATE outbox_message
+                        SET status = 'SENT',
+                            sent_at = :sentAt,
+                            lease_expires_at = NULL,
+                            updated_at = now()
+                        WHERE id = :id AND status = 'SENDING'
+                        """)
+                .bind("id", id)
+                .bind("sentAt", OffsetDateTime.ofInstant(sentAt, ZoneOffset.UTC))
+                .fetch()
+                .rowsUpdated();
+    }
+
+    @Override
+    public Mono<Long> markFailed(UUID id, Instant now, String error) {
+        return databaseClient.sql("""
+                        UPDATE outbox_message
+                        SET status = 'FAILED',
+                            last_error = :error,
+                            lease_expires_at = NULL,
+                            updated_at = :now
+                        WHERE id = :id AND status = 'SENDING'
+                        """)
+                .bind("id", id)
+                .bind("now", OffsetDateTime.ofInstant(now, ZoneOffset.UTC))
+                .bind("error", truncateError(error))
+                .fetch()
+                .rowsUpdated();
+    }
+
+    @Override
+    public Mono<Long> scheduleRetry(UUID id, int attempts, Instant nextAttemptAt, Instant now, String error) {
+        return databaseClient.sql("""
+                        UPDATE outbox_message
+                        SET status = 'PENDING',
+                            attempts = :attempts,
+                            next_attempt_at = :nextAttemptAt,
+                            last_error = :error,
+                            lease_expires_at = NULL,
+                            updated_at = :now
+                        WHERE id = :id AND status = 'SENDING'
+                        """)
+                .bind("id", id)
+                .bind("attempts", attempts)
+                .bind("nextAttemptAt", OffsetDateTime.ofInstant(nextAttemptAt, ZoneOffset.UTC))
+                .bind("now", OffsetDateTime.ofInstant(now, ZoneOffset.UTC))
+                .bind("error", truncateError(error))
+                .fetch()
+                .rowsUpdated();
+    }
+
+    /** Trunca el error para no exceder la columna VARCHAR(255). */
+    private static String truncateError(String error) {
+        if (error == null) {
+            return null;
+        }
+        return error.length() > 255 ? error.substring(0, 255) : error;
     }
 
     /** Mapea una fila del {@code RETURNING} del reclamo (DatabaseClient). */
