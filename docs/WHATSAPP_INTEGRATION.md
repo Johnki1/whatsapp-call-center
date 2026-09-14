@@ -18,7 +18,7 @@ El motor conversacional **desconoce** el canal: solo produce texto de respuesta.
 | `WHATSAPP_ACCESS_TOKEN` | Token de acceso (System User / WABA token) | Sí |
 | `WHATSAPP_PHONE_NUMBER_ID` | ID del número de teléfono | No |
 | `WHATSAPP_WABA_ID` | ID de la cuenta WABA | No |
-| `WHATSAPP_API_VERSION` | Versión de Graph API (ej. `v21.0`) | No |
+| `WHATSAPP_API_VERSION` | Versión de Graph API (default `v25.0`) | No |
 | `WHATSAPP_GRAPH_BASE_URL` | Host de la Graph API (default `https://graph.facebook.com`) | No |
 | `WHATSAPP_API_TIMEOUT_MS` | Timeout de respuesta HTTP en ms (default `10000`) | No |
 | `WHATSAPP_CONNECT_TIMEOUT_MS` | Timeout de conexión HTTP en ms (default `5000`) | No |

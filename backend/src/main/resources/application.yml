@@ -44,7 +44,7 @@ whatsapp:
     access-token: ${WHATSAPP_ACCESS_TOKEN:}
     phone-number-id: ${WHATSAPP_PHONE_NUMBER_ID:}
     waba-id: ${WHATSAPP_WABA_ID:}
-    api-version: ${WHATSAPP_API_VERSION:v21.0}
+    api-version: ${WHATSAPP_API_VERSION:v25.0}
     base-url: ${WHATSAPP_GRAPH_BASE_URL:https://graph.facebook.com}
     # Timeouts del cliente HTTP hacia Meta (Fase 7A). Evitan esperas indefinidas.
     timeout-ms: ${WHATSAPP_API_TIMEOUT_MS:10000}

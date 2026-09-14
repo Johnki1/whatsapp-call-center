@@ -8,7 +8,7 @@
 #   BOT_WHATSAPP_CLIENT      = meta                 (selecciona MetaWhatsAppClient)
 #   WHATSAPP_ACCESS_TOKEN    = <token Bearer>        (SECRETO: no va a Git)
 #   WHATSAPP_PHONE_NUMBER_ID = <id numérico>         (emisor: POST .../{id}/messages)
-#   WHATSAPP_API_VERSION     = v21.0                 (versión de la Graph API)
+#   WHATSAPP_API_VERSION     = v25.0                 (versión de la Graph API)
 #   WHATSAPP_GRAPH_BASE_URL  = https://graph.facebook.com
 #
 # Variables de entorno OPCIONALES (tienen default en application.yml):
