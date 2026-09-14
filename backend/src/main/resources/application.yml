@@ -46,6 +46,9 @@ whatsapp:
     waba-id: ${WHATSAPP_WABA_ID:}
     api-version: ${WHATSAPP_API_VERSION:v21.0}
     base-url: ${WHATSAPP_GRAPH_BASE_URL:https://graph.facebook.com}
+    # Timeouts del cliente HTTP hacia Meta (Fase 7A). Evitan esperas indefinidas.
+    timeout-ms: ${WHATSAPP_API_TIMEOUT_MS:10000}
+    connect-timeout-ms: ${WHATSAPP_CONNECT_TIMEOUT_MS:5000}
 
 # ===== OutboxPoller (Fase 6) =====
 app:

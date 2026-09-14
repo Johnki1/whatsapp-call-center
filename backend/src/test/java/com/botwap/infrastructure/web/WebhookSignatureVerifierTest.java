@@ -24,7 +24,8 @@ class WebhookSignatureVerifierTest {
         WhatsAppProperties props = new WhatsAppProperties(
                 new WhatsAppProperties.Client("mock"),
                 new WhatsAppProperties.Webhook("test-verify-token"),
-                new WhatsAppProperties.Api(APP_SECRET, "token", "123", "waba", "v21.0", "https://graph.facebook.com")
+                new WhatsAppProperties.Api(APP_SECRET, "token", "123", "waba", "v21.0",
+                        "https://graph.facebook.com", 10_000L, 5_000L)
         );
         verifier = new WebhookSignatureVerifier(props);
     }
@@ -73,7 +74,7 @@ class WebhookSignatureVerifierTest {
         WhatsAppProperties props = new WhatsAppProperties(
                 new WhatsAppProperties.Client("mock"),
                 new WhatsAppProperties.Webhook("token"),
-                new WhatsAppProperties.Api("", "", "", "", "", "")
+                new WhatsAppProperties.Api("", "", "", "", "", "", 10_000L, 5_000L)
         );
         WebhookSignatureVerifier noSecretVerifier = new WebhookSignatureVerifier(props);
 

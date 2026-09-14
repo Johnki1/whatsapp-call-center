@@ -1,8 +1,28 @@
-# ===== Perfil META (producción / pruebas reales) =====
-# Requiere TODAS las variables reales de Meta en el entorno:
-#   WHATSAPP_VERIFY_TOKEN, WHATSAPP_APP_SECRET, WHATSAPP_ACCESS_TOKEN,
-#   WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_WABA_ID
-# La validación completa de secretos se habilita en la Fase 7.
+# ===== Perfil META (envío real por WhatsApp Cloud API de Meta) =====
+#
+# Activar con:  SPRING_PROFILES_ACTIVE=meta  BOT_WHATSAPP_CLIENT=meta
+#
+# Variables de entorno OBLIGATORIAS (el arranque falla con fail-fast si falta
+# alguna cuando whatsapp.client.mode=meta). NUNCA se versionan valores reales:
+#
+#   BOT_WHATSAPP_CLIENT      = meta                 (selecciona MetaWhatsAppClient)
+#   WHATSAPP_ACCESS_TOKEN    = <token Bearer>        (SECRETO: no va a Git)
+#   WHATSAPP_PHONE_NUMBER_ID = <id numérico>         (emisor: POST .../{id}/messages)
+#   WHATSAPP_API_VERSION     = v21.0                 (versión de la Graph API)
+#   WHATSAPP_GRAPH_BASE_URL  = https://graph.facebook.com
+#
+# Variables de entorno OPCIONALES (tienen default en application.yml):
+#
+#   WHATSAPP_API_TIMEOUT_MS     = 10000   (timeout de respuesta, ms)
+#   WHATSAPP_CONNECT_TIMEOUT_MS = 5000    (timeout de conexión, ms)
+#
+# Variables del webhook inbound (recepción, no envío):
+#
+#   WHATSAPP_VERIFY_TOKEN = <token propio>   (SECRETO)
+#   WHATSAPP_APP_SECRET   = <app secret>     (SECRETO: firma HMAC-SHA256)
+#
+# El adaptador solo envía mensajes de texto: los reintentos y el backoff los
+# aplica el OutboxPoller (Fase 6), no MetaWhatsAppClient.
 whatsapp:
   client:
     mode: meta

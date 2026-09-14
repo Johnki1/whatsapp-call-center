@@ -1,11 +1,16 @@
 # ===== Perfil TEST (Testcontainers define las URLs de forma dinámica) =====
 whatsapp:
   client:
+    # Los tests usan MockWhatsAppClient: ningún test llama a Meta real.
     mode: mock
   webhook:
     verify-token: test-verify-token
   api:
     app-secret: test-app-secret
+    # Timeouts reducidos (Fase 7A): solo aplican si algún test habilitase
+    # whatsapp.client.mode=meta, para fallar rápido en lugar de quedarse colgado.
+    timeout-ms: 2000
+    connect-timeout-ms: 1000
 
 spring:
   flyway:

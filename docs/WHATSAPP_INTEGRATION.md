@@ -19,6 +19,9 @@ El motor conversacional **desconoce** el canal: solo produce texto de respuesta.
 | `WHATSAPP_PHONE_NUMBER_ID` | ID del número de teléfono | No |
 | `WHATSAPP_WABA_ID` | ID de la cuenta WABA | No |
 | `WHATSAPP_API_VERSION` | Versión de Graph API (ej. `v21.0`) | No |
+| `WHATSAPP_GRAPH_BASE_URL` | Host de la Graph API (default `https://graph.facebook.com`) | No |
+| `WHATSAPP_API_TIMEOUT_MS` | Timeout de respuesta HTTP en ms (default `10000`) | No |
+| `WHATSAPP_CONNECT_TIMEOUT_MS` | Timeout de conexión HTTP en ms (default `5000`) | No |
 | `DB_*` | Credenciales de la BD | Sí (password) |
 | `BOTWAP_*` | Config genérica del bot | No |
 
@@ -86,17 +89,100 @@ WhatsAppClient (domain port)
  └── MetaWhatsAppClient     → prod: POST a Graph API
 ```
 
-Selección por perfil Spring (`@ConditionalOnProperty`, ej. `bot.whatsapp.client=mock|meta`).
+Selección del adaptador mediante `@ConditionalOnProperty` sobre `whatsapp.client.mode`:
 
-**MetaWhatsAppClient**:
-- Endpoint: `POST https://graph.facebook.com/{WHATSAPP_API_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/messages`
-- Header: `Authorization: Bearer {WHATSAPP_ACCESS_TOKEN}`
-- Body: `{ "messaging_product": "whatsapp", "to": "<wa_id>", "type": "text", "text": {"body": "<texto>"} }`
-- Cliente: `WebClient` reactivo con `timeout` (ej. 10s) y política de reintentos (`retryWhen` con backoff) solo para errores transitorios (429/5xx).
-- Errores 401 → configuración inválida; 400 → payload inválido (se logea a nivel interno, sin datos sensibles).
+| `whatsapp.client.mode` | Adaptador activo | Perfiles típicos |
+|---|---|---|
+| `mock` (default) | `MockWhatsAppClient` | `local`, `test` |
+| `meta` | `MetaWhatsAppClient` | `meta` |
+
+El contrato del puerto es el mismo para ambos adaptadores y **no cambia**:
+
+```java
+Mono<WhatsAppSendResult> sendMessage(String waId, String text);
+```
+
+**MetaWhatsAppClient** (implementación real — Fase 7A):
+
+- **Endpoint**: `POST {WHATSAPP_GRAPH_BASE_URL}/{WHATSAPP_API_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/messages`
+- **Autenticación**: header `Authorization: Bearer {WHATSAPP_ACCESS_TOKEN}`
+- **Content-Type**: `application/json`
+- **Body**:
+
+```json
+{
+  "messaging_product": "whatsapp",
+  "to": "<waId>",
+  "type": "text",
+  "text": { "body": "<texto>" }
+}
+```
+
+- **Respuesta 2xx**:
+
+```json
+{ "messaging_product": "whatsapp", "contacts": [ ... ], "messages": [ { "id": "wamid..." } ] }
+```
+
+  El `id` de `messages[0]` se convierte en `new WhatsAppSendResult(wamid)`.
+
+- **Cliente HTTP**: `WebClient` (Spring WebFlux) sobre Reactor Netty. No se usa `RestTemplate`, OkHttp ni otra librería HTTP, y no hay `block()` en el flujo productivo.
+
+#### Un 2xx sin `messages[0].id` es un error
+
+Nunca se devuelve `Mono.empty()`: si el `OutboxPoller` recibiese un `Mono` vacío en lugar de un resultado, no marcaría el mensaje como `SENT` y quedaría colgado en `SENDING` hasta expirar el lease. Un 2xx sin `messages[0].id` produce `Mono.error`.
+
+#### Timeouts
+
+| Propiedad | Variable de entorno | Default | Efecto |
+|---|---|---|---|
+| `whatsapp.api.timeout-ms` | `WHATSAPP_API_TIMEOUT_MS` | `10000` | `responseTimeout` de Reactor Netty |
+| `whatsapp.api.connect-timeout-ms` | `WHATSAPP_CONNECT_TIMEOUT_MS` | `5000` | `CONNECT_TIMEOUT_MILLIS` |
+
+Se aplican en el `HttpClient` de Reactor Netty del adaptador, de modo que una petición contra Meta **nunca puede quedar esperando indefinidamente**. No se añade un `timeout()` reactivo adicional: ambos ya acotan conexión + respuesta.
+
+#### Manejo de errores
+
+Toda respuesta no-2xx (400, 401, 403, 404, 409, 429, 500, 502, 503, 504...) produce `Mono.error(MetaDeliveryException)` con un mensaje **seguro y truncado a 255 caracteres** (igual que `outbox_message.last_error`):
+
+```
+Meta API error: status=400, code=131026, message=Message undeliverable., fbtrace_id=AbCdEfTrace
+```
+
+Solo se extraen `error.code`, `error.message` y `error.fbtrace_id` del JSON de Meta. **Nunca** se propagan el cuerpo completo de la respuesta, cabeceras ni el `Authorization`.
+
+#### Reintentos: responsabilidad exclusiva del Outbox
+
+`MetaWhatsAppClient` **NO** implementa `retryWhen`, backoff ni ninguna política de reintentos. Solo propaga el error; la política vive en el `OutboxPoller` (Fase 6):
+
+```
+MetaWhatsAppClient → Mono.error(...)
+        ↓
+OutboxPoller → attempts < maxAttempts ? scheduleRetry(backoff exponencial) : markFailed
+```
+
+Duplicar la política (reintentos HTTP internos × reintentos del Outbox) multiplicaría las llamadas a Meta y dificultaría la observabilidad. **Un único dueño de la política de reintentos: el Outbox.**
+
+#### Fail fast de configuración
+
+Con `whatsapp.client.mode=meta` se valida al construir el bean que `accessToken`, `phoneNumberId`, `apiVersion` y `baseUrl` no sean nulos ni vacíos. Si falta alguno, el arranque falla con un error claro que **solo menciona el nombre de la variable**:
+
+```
+WHATSAPP_ACCESS_TOKEN is required when whatsapp.client.mode=meta
+```
+
+El valor del token jamás aparece en el mensaje de la excepción ni en los logs.
+
+#### Seguridad
+
+Nunca se registran: `accessToken`, header `Authorization`, `App Secret` ni `Verify Token`; tampoco el cuerpo completo de las respuestas de error. Sí se registra la configuración no sensible (`baseUrl`, `apiVersion`, `phoneNumberId`, timeouts). Los secretos **nunca** deben ir a Git: se inyectan por variables de entorno (ver `.env.example`).
+
+#### Tests
+
+Los tests de `MetaWhatsAppClient` **no llaman a Meta real**: usan un stub HTTP local sobre Reactor Netty (`StubMetaGraphServer`) en un puerto efímero, sin Internet, sin credenciales reales y sin dependencias nuevas (ni WireMock ni MockWebServer).
 
 **MockWhatsAppClient**:
-- En perfil `local`/`test`: registra en log estructurado y opcionalmente en BD (mensaje outbound `SENT`). Permite E2E completo sin Meta.
+- En perfil `local`/`test`: registra en log y devuelve un `wamid` simulado. Permite el E2E completo sin Meta. **Se conserva** como adaptador por defecto.
 
 ## 7. Fiabilidad y consistencia de la entrega (Outbox)
 
@@ -118,18 +204,26 @@ Selección por perfil Spring (`@ConditionalOnProperty`, ej. `bot.whatsapp.client
 3. Smoke test: POST un payload simulado al webhook. (Se proveerá un script de ejemplo en Fase 4.)
 4. El `OutboxPoller` del perfil local usa el mock: la respuesta también pasa por la cola (misma Fase B), solo que el adaptador es simulado. El flujo E2E es idéntico al de producción → los tests de integración cubren exactamente el mismo camino, outbox incluido.
 
-## 9. Conectar Meta real (cuando el registro esté completo)
+## 9. Activar el envío real con Meta
 
-1. Crear app en Meta for Developers, obtener `WHATSAPP_APP_SECRET`.
-2. Configurar WABA + phone number; obtener `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_WABA_ID`.
-3. Generar token de acceso (System User con permisos `whatsapp_business_messaging`).
-4. Exponer el backend con URL pública (ngrok) y configurar el webhook en el dashboard de Meta apuntando a `https://<túnel>/webhook/whatsapp`, con el mismo `verify_token`.
-5. Suscribirse al campo `messages`.
-6. Poner las variables de entorno reales y arrancar con perfil `meta`.
-   **Ningún cambio de código es necesario.**
+Requisitos de configuración (Fase 7A). **Ningún cambio de código es necesario:**
+
+1. Crear la app en Meta for Developers y obtener el `WHATSAPP_APP_SECRET`.
+2. Configurar WABA + número de teléfono y obtener `WHATSAPP_PHONE_NUMBER_ID` (y `WHATSAPP_WABA_ID`).
+3. Generar un token de acceso (System User con permiso `whatsapp_business_messaging`) → `WHATSAPP_ACCESS_TOKEN`.
+4. Definir las variables restantes: `WHATSAPP_API_VERSION`, `WHATSAPP_GRAPH_BASE_URL`, `WHATSAPP_API_TIMEOUT_MS`, `WHATSAPP_CONNECT_TIMEOUT_MS`.
+5. Arrancar con `SPRING_PROFILES_ACTIVE=meta` y `BOT_WHATSAPP_CLIENT=meta`.
+
+Si falta `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_API_VERSION` o `WHATSAPP_GRAPH_BASE_URL`, el arranque **falla con un mensaje claro** (fail fast) en lugar de fallar silenciosamente en cada envío.
+
+Verificación sin tocar Meta: `WHATSAPP_GRAPH_BASE_URL` es configurable, de modo que se puede apuntar a un servidor local que emule la Graph API. Los tests automatizados ya lo hacen con `StubMetaGraphServer`.
+
+> La exposición pública del webhook y el despliegue (HTTPS, DNS, infraestructura) corresponden a una fase posterior y quedan **fuera del alcance de la Fase 7A**.
 
 ## 10. Límites a conocer
 
 - Ventana de 24h: solo podemos iniciar mensajes a usuarios que nos hayan escrito (no aplica a este bot, que siempre responde dentro de la conversación iniciada por el usuario).
 - Límites de throughput de la API (tiers de mensajes): fuera de alcance en esta fase.
 - `wamid` es la clave correcta de deduplicación (única por mensaje).
+- El cuerpo de un mensaje de texto tiene un límite de 4096 caracteres en la Graph API; las respuestas del motor conversacional están muy por debajo de ese límite.
+- La entrega externa es **at-least-once**: ver §7 (ventana de crash tras el POST y recuperación por lease).
