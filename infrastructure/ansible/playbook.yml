@@ -263,4 +263,100 @@
         mode: "0600"
       no_log: true
 
-    # (continúa en la sección 5: Nginx)
+    # ============================================================
+    # 5. NGINX — Reverse proxy
+    # ============================================================
+    - name: Desplegar configuración de Nginx (reverse proxy)
+      ansible.builtin.template:
+        src: templates/nginx-botwap.conf.j2
+        dest: /etc/nginx/sites-available/botwap
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reiniciar Nginx
+
+    - name: Deshabilitar sitio por defecto de Nginx
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Reiniciar Nginx
+
+    - name: Habilitar sitio botwap (enlace simbólico)
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/botwap
+        dest: /etc/nginx/sites-enabled/botwap
+        state: link
+      notify: Reiniciar Nginx
+
+    - name: Validar sintaxis de la configuración de Nginx
+      ansible.builtin.command:
+        cmd: nginx -t
+      changed_when: false
+
+    - name: Aplicar recargas de Nginx pendientes
+      ansible.builtin.meta: flush_handlers
+
+    # ============================================================
+    # 6. HTTPS — Certificado Let's Encrypt
+    # ============================================================
+    - name: Comprobar si ya existe el certificado TLS
+      ansible.builtin.stat:
+        path: /etc/letsencrypt/live/{{ dominio }}/fullchain.pem
+      register: tls_cert
+
+    # Preflight local: si el DNS no apunta a esta VM, Certbot falla
+    # y se quema el rate limit de Let's Encrypt (5 certs/semana).
+    # Fallar aquí, antes del intento, lo evita.
+    - name: Verificar que el DNS del dominio apunta a esta VM
+      ansible.builtin.command:
+        cmd: getent hosts {{ dominio }}
+      delegate_to: localhost
+      become: false
+      register: dns_lookup
+      changed_when: false
+      failed_when: "'20.88.28.27' not in dns_lookup.stdout"
+      when: not tls_cert.stat.exists
+
+    - name: Emitir certificado TLS con Certbot (modo no interactivo)
+      ansible.builtin.command:
+        cmd: >
+          certbot --nginx -d {{ dominio }}
+          --non-interactive --agree-tos
+          -m {{ email_certbot }}
+      when: not tls_cert.stat.exists
+      register: certbot_result
+      changed_when: certbot_result.rc == 0
+
+    - name: Habilitar renovación automática (certbot.timer)
+      ansible.builtin.systemd:
+        name: certbot.timer
+        enabled: true
+        state: started
+
+    # ============================================================
+    # 7. DESPLIEGUE
+    # ============================================================
+    - name: Levantar stack (postgres + backend) con Docker Compose
+      ansible.builtin.command:
+        cmd: docker compose -f {{ deploy_dir }}/docker-compose.yml up -d --build
+      args:
+        chdir: "{{ deploy_dir }}"
+      register: compose_up
+
+    - name: Esperar a que el backend responda healthcheck OK
+      ansible.builtin.command:
+        cmd: curl -fsS http://127.0.0.1:{{ backend_port }}/actuator/health
+      register: backend_health
+      until: backend_health.rc == 0 and '"UP"' in backend_health.stdout
+      retries: 30
+      delay: 10
+      changed_when: false
+
+    - name: Resumen del despliegue
+      ansible.builtin.debug:
+        msg:
+          - "Despliegue completado."
+          - "HTTP:    http://{{ dominio }}/ (redirige a HTTPS)"
+          - "HTTPS:   https://{{ dominio }}/"
+          - "Salud:   https://{{ dominio }}/actuator/health"
+          - "Webhook: https://{{ dominio }}/webhook/whatsapp"
