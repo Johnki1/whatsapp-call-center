@@ -26,3 +26,11 @@
 whatsapp:
   client:
     mode: meta
+
+# ===== DEBUG temporal (observabilidad total del webhook en vivo) =====
+# Revertir a INFO una vez diagnosticado el problema de mensajes reales.
+logging:
+  level:
+    com.botwap: DEBUG
+    org.springframework.web.reactive: DEBUG
+    org.springframework.security: DEBUG

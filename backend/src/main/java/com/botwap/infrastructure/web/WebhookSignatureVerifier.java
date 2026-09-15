@@ -64,7 +64,10 @@ public class WebhookSignatureVerifier {
 
             boolean valid = java.security.MessageDigest.isEqual(expectedDigest, providedDigest);
             if (!valid) {
-                log.warn("Firma de webhook invalida (posible ataque o configuracion erronea)");
+                String expectedSignature = SHA256_PREFIX + HexFormat.of().formatHex(expectedDigest);
+                log.warn("[WEBHOOK] Validacion HMAC fallida: firma esperada={} vs firma recibida={} (body de {} bytes). "
+                                + "Verifica WHATSAPP_APP_SECRET en el servidor.",
+                        expectedSignature, signatureHeader, bodyBytes.length);
             }
             return Mono.just(valid);
         } catch (Exception e) {

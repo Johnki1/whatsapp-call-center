@@ -91,11 +91,14 @@ public class WhatsAppWebhookController {
             @RequestBody byte[] payloadBytes) {
 
         String rawBody = new String(payloadBytes, StandardCharsets.UTF_8);
+        log.info("[WEBHOOK RAW] Payload recibido: {} | X-Hub-Signature-256: {}", rawBody, signature);
         log.info("Webhook recibido ({} bytes)", payloadBytes.length);
 
         return signatureVerifier.verify(signature, rawBody)
                 .flatMap(valid -> {
                     if (!valid) {
+                        log.warn("[WEBHOOK] Firma HMAC rechazada. Se responde 400 sin procesar. X-Hub-Signature-256 recibida: {}",
+                                signature);
                         return Mono.just(ResponseEntity.status(HttpStatus.BAD_REQUEST).<Void>build());
                     }
                     return extractInbound(rawBody)
@@ -111,7 +114,8 @@ public class WhatsAppWebhookController {
                             }));
                 })
                 .onErrorResume(e -> {
-                    log.error("Error procesando webhook", e);
+                    log.error("[WEBHOOK] Error no controlado procesando mensaje inbound ({}: {}). Se responde 500.",
+                            e.getClass().getName(), e.getMessage(), e);
                     return Mono.just(ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).<Void>build());
                 });
     }
@@ -160,7 +164,12 @@ public class WhatsAppWebhookController {
 
             return Mono.just(new ExtractedMessage(waId, wamid, text));
         } catch (JsonProcessingException e) {
-            log.warn("No se pudo parsear el payload del webhook", e);
+            // Incluye el body completo: si Meta envia un campo inesperado, el stacktrace
+            // + el payload permiten diagnosticar sin reproducir el request.
+            log.error("[WEBHOOK] Deserializacion Jackson fallida para payload: {}", rawBody, e);
+            return Mono.error(e);
+        } catch (Exception e) {
+            log.error("[WEBHOOK] Error inesperado extrayendo mensaje inbound del payload: {}", rawBody, e);
             return Mono.error(e);
         }
     }
