@@ -20,7 +20,7 @@ Contexto de estado de un usuario. UNA activa por `wa_id`.
 | Columna | Tipo | Restricciones |
 |---|---|---|
 | id | UUID (PK) | generado por app o db |
-| wa_id | VARCHAR(20) | NOT NULL — número del usuario (sin `+`) |
+| wa_id | VARCHAR(32) | NOT NULL — número del usuario (sin `+`). V2: ensanchado desde VARCHAR(20) como margen preventivo ante formatos con prefijo de Meta (E.164 son máx. 15 dígitos) |
 | state | VARCHAR(50) | NOT NULL — enum del estado actual (ej. `MAIN_MENU`) |
 | status | VARCHAR(20) | NOT NULL — `ACTIVE` / `CLOSED` |
 | version | BIGINT | NOT NULL DEFAULT 0 — optimistic lock |
@@ -61,7 +61,7 @@ Registro de cada mensaje entrante y saliente (auditoría + deduplicación).
 |---|---|---|
 | id | UUID (PK) | — |
 | conversation_id | UUID | FK → conversation(id) `ON DELETE CASCADE` |
-| wa_message_id | VARCHAR(64) | nullable — `wamid` de WhatsApp (solo si Meta lo provee) |
+| wa_message_id | VARCHAR(255) | nullable — `wamid` de WhatsApp (solo si Meta lo provee). V2: ensanchado desde VARCHAR(64) — los wamid reales (`wamid.HBgM...`) superan 64 chars y abortaban el INSERT en producción |
 | direction | VARCHAR(10) | NOT NULL, CHECK `IN ('INBOUND','OUTBOUND')` |
 | status | VARCHAR(20) | NOT NULL — inbound: `RECEIVED`/`PROCESSED`; outbound: `PENDING`/`SENT`/`FAILED` |
 | type | VARCHAR(20) | NOT NULL — `TEXT`, `BUTTON`, etc. |
@@ -84,7 +84,7 @@ Una fila = una respuesta pendiente de enviar a WhatsApp. Se `INSERT` en la **mis
 | id | UUID (PK) | — |
 | message_id | UUID | FK → message(id) — el mensaje saliente asociado; **ÚNICO** (un outbox por respuesta) |
 | conversation_id | UUID | FK → conversation(id) `ON DELETE CASCADE` |
-| wa_id | VARCHAR(20) | NOT NULL — destinatario (denormalizado para diagnóstico) |
+| wa_id | VARCHAR(32) | NOT NULL — destinatario (denormalizado para diagnóstico). V2: ensanchado desde VARCHAR(20) (preventivo) |
 | payload | JSONB | NOT NULL — documento de entrega (texto de la respuesta) |
 | status | VARCHAR(20) | NOT NULL — `PENDING` / `SENDING` / `SENT` / `FAILED` |
 | attempts | SMALLINT | NOT NULL DEFAULT 0 — número de reintentos |
@@ -159,7 +159,7 @@ Reglas:
 
 ## 4. Migraciones
 
-- **Flyway** con scripts versionados en `backend/src/main/resources/db/migration/` (`V1__init.sql` crea `conversation`, `conversation_selection`, `message` y `outbox_message`; `V2__seed_menus.sql` si aplica).
+- **Flyway** con scripts versionados en `backend/src/main/resources/db/migration/` (`V1__init.sql` crea `conversation`, `conversation_selection`, `message` y `outbox_message`; `V2__widen_meta_ids.sql` ensancha `message.wa_message_id` a VARCHAR(255) y `wa_id` a VARCHAR(32) — los wamid reales de Meta superan 64 chars).
 - El DDL canónico (CREATE TABLE/INDEXES/CHECK) se autorá en **Fase 3**; este documento es la especificación.
 - PostgreSQL 16 (imagen `postgres:16-alpine`) — versión alineada con el entorno local ya disponible.
 
