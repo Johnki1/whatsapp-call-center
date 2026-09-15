@@ -1,0 +1,266 @@
+---
+# ============================================================
+# BotWap — Aprovisionamiento completo del servidor (Fase 7C-2)
+# ============================================================
+# Configura la VM Ubuntu 24.04 (creada por Terraform en 7C) de
+# principio a fin:
+#
+#   1. Sistema base: Docker + Compose V2, Nginx, Certbot, Azure CLI
+#   2. Secretos: login con Managed Identity + lectura del Key Vault
+#   3. Archivos: /opt/botwap (compose + contexto de build del backend)
+#   4. Entorno: /opt/botwap/.env (0600 root) con los secretos inyectados
+#   5. Nginx: reverse proxy :80 -> 127.0.0.1:8080 para api.johnkider.app
+#   6. HTTPS: Certbot no interactivo (+ renovación automática)
+#   7. Despliegue: docker compose up -d + verificación de salud
+#
+# Ejecución (desde esta carpeta):
+#   ansible-playbook playbook.yml --check --diff   # simulación
+#   ansible-playbook playbook.yml                  # ejecución real
+#
+# PREREQUISITOS:
+#   - Clave SSH en ../terraform/id_ed25519_azure (chmod 600)
+#   - DNS: api.johnkider.app -> IP pública de la VM (requerido
+#     por Certbot; el playbook lo valida y falla si no coincide)
+#   - Secretos cargados en el Key Vault kv-botwap-prod-gmsy
+#
+# SEGURIDAD:
+#   - Ningún secreto se imprime en logs (no_log: true en cada
+#     tarea que toca valores sensibles).
+#   - El .env queda con 0600 y propietario root en la VM.
+#   - La VM lee el Key Vault con su Managed Identity (sin
+#     credenciales hardcodeadas ni tokens persistentes).
+# ============================================================
+
+- name: Aprovisionar servidor BotWap y desplegar la aplicación
+  hosts: botwap
+  become: true
+  gather_facts: true
+
+  vars:
+    # --- Parámetros del despliegue ---
+    dominio: api.johnkider.app
+    email_certbot: john_alzate82222@elpoli.edu.co
+    deploy_dir: /opt/botwap
+    backend_port: 8080
+    kv_name: kv-botwap-prod-gmsy
+
+    # --- Mapa secreto Key Vault -> variable de entorno ---
+    kv_secrets_map:
+      whatsapp-access-token: WHATSAPP_ACCESS_TOKEN
+      whatsapp-app-secret: WHATSAPP_APP_SECRET
+      whatsapp-verify-token: WHATSAPP_VERIFY_TOKEN
+      postgres-password: POSTGRES_PASSWORD
+      whatsapp-phone-number-id: WHATSAPP_PHONE_NUMBER_ID
+      whatsapp-waba-id: WHATSAPP_WABA_ID
+      whatsapp-app-id: WHATSAPP_APP_ID
+
+  handlers:
+    - name: Reiniciar Nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: restarted
+        enabled: true
+
+  tasks:
+    # ============================================================
+    # 1. SISTEMA BASE
+    # ============================================================
+    - name: Actualizar caché de paquetes y sistema
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+        upgrade: safe
+
+    - name: Instalar paquetes base
+      ansible.builtin.apt:
+        name: [ca-certificates, curl, gnupg, rsync, software-properties-common]
+        state: present
+
+    # ---- Docker CE + Compose V2 (repositorio oficial) ----
+    - name: Preparar directorio de keyrings de APT
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: Registrar clave GPG oficial de Docker
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: "0644"
+
+    - name: Registrar repositorio oficial de Docker
+      ansible.builtin.copy:
+        content: >-
+          deb [signed-by=/etc/apt/keyrings/docker.asc]
+          https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable
+        dest: /etc/apt/sources.list.d/docker.list
+        mode: "0644"
+
+    - name: Instalar Docker Engine y Docker Compose V2
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+
+    - name: Docker en ejecución y habilitado al arranque
+      ansible.builtin.systemd:
+        name: docker
+        enabled: true
+        state: started
+
+    - name: Habilitar azureadmin en el grupo docker
+      ansible.builtin.user:
+        name: azureadmin
+        groups: docker
+        append: true
+
+    # ---- Nginx + Certbot ----
+    - name: Instalar Nginx y Certbot (plugin nginx)
+      ansible.builtin.apt:
+        name: [nginx, certbot, python3-certbot-nginx]
+        state: present
+
+    # ---- Azure CLI (necesario para leer el Key Vault con la MI) ----
+    - name: Registrar clave GPG de Microsoft
+      ansible.builtin.get_url:
+        url: https://packages.microsoft.com/keys/microsoft.asc
+        dest: /etc/apt/trusted.gpg.d/microsoft.asc
+        mode: "0644"
+
+    - name: Registrar repositorio de Azure CLI
+      ansible.builtin.copy:
+        content: >-
+          deb [arch=amd64]
+          https://packages.microsoft.com/ubuntu/{{ ansible_distribution_major_version }}.04/prod
+          {{ ansible_distribution_release }} main
+        dest: /etc/apt/sources.list.d/azure-cli.list
+        mode: "0644"
+
+    - name: Instalar Azure CLI
+      ansible.builtin.apt:
+        name: azure-cli
+        state: present
+        update_cache: true
+
+    # ============================================================
+    # 2. KEY VAULT — Secretos vía Managed Identity
+    # ============================================================
+    - name: Autenticar con la Managed Identity de la VM
+      ansible.builtin.command:
+        cmd: az login --identity --only-show-errors
+      changed_when: false
+
+    - name: Listar secretos existentes en el Key Vault (solo nombres)
+      ansible.builtin.command:
+        cmd: az keyvault secret list --vault-name {{ kv_name }} --query "[].name" -o tsv
+      register: kv_secret_names
+      changed_when: false
+
+    - name: Validar que todos los secretos requeridos existan
+      ansible.builtin.assert:
+        that: item in kv_secret_names.stdout_lines
+        fail_msg: >-
+          Falta el secreto '{{ item }}' en el Key Vault {{ kv_name }}.
+          Créalo con: az keyvault secret set --vault-name {{ kv_name }} --name {{ item }} --value <valor>
+        quiet: true
+      loop: "{{ kv_secrets_map.keys() | list }}"
+
+    - name: Leer valores de los secretos del Key Vault
+      ansible.builtin.command:
+        cmd: az keyvault secret show --vault-name {{ kv_name }} --name {{ item.key }} --query value -o tsv
+      register: kv_secret_values
+      changed_when: false
+      no_log: true
+      loop: "{{ kv_secrets_map | dict2items }}"
+      loop_control:
+        label: secreto-oculto
+
+    - name: Consolidar secretos en variables de Ansible
+      ansible.builtin.set_fact:
+        kv_secrets: >-
+          {{ dict(kv_secret_values.results
+                  | map(attribute='item') | map(attribute='key')
+                  | zip(kv_secret_values.results | map(attribute='stdout') | map('trim'))) }}
+      no_log: true
+
+    - name: Validar que ningún secreto esté vacío
+      ansible.builtin.assert:
+        that: kv_secrets[item] | length > 0
+        fail_msg: "El secreto '{{ item }}' existe pero está vacío en {{ kv_name }}"
+        quiet: true
+      loop: "{{ kv_secrets_map.keys() | list }}"
+      no_log: true
+
+    # ============================================================
+    # 3. ARCHIVOS DEL PROYECTO
+    # ============================================================
+    - name: Crear directorio de despliegue {{ deploy_dir }}
+      ansible.builtin.file:
+        path: "{{ deploy_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Crear directorio de build del backend
+      ansible.builtin.file:
+        path: "{{ deploy_dir }}/backend"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Copiar docker-compose.yml al servidor
+      ansible.builtin.copy:
+        src: ../../docker-compose.yml
+        dest: "{{ deploy_dir }}/docker-compose.yml"
+        owner: root
+        group: root
+        mode: "0644"
+
+    # Contexto de build requerido por el Dockerfile multi-stage
+    # (COPY pom.xml + COPY src). target/ NO se copia: se compila en la VM.
+    - name: Copiar pom.xml del backend
+      ansible.builtin.copy:
+        src: ../../backend/pom.xml
+        dest: "{{ deploy_dir }}/backend/pom.xml"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Copiar fuentes del backend (src/)
+      ansible.builtin.copy:
+        src: ../../backend/src/
+        dest: "{{ deploy_dir }}/backend/src/"
+        owner: root
+        group: root
+        mode: "0644"
+        directory_mode: "0755"
+
+    - name: Copiar Dockerfile del backend
+      ansible.builtin.copy:
+        src: ../../backend/Dockerfile
+        dest: "{{ deploy_dir }}/backend/Dockerfile"
+        owner: root
+        group: root
+        mode: "0644"
+
+    # ============================================================
+    # 4. ENTORNO — .env con secretos (0600, root)
+    # ============================================================
+    - name: Generar {{ deploy_dir }}/.env con los secretos del Key Vault
+      ansible.builtin.template:
+        src: templates/botwap.env.j2
+        dest: "{{ deploy_dir }}/.env"
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+
+    # (continúa en la sección 5: Nginx)

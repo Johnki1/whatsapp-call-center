@@ -1,0 +1,13 @@
+# ============================================================
+# BotWap — Exclusiones de Git para la carpeta Ansible
+# ============================================================
+
+*.retry
+
+# ===== Claves privadas — NUNCA versionar =====
+id_ed25519*
+*.pem
+*.key
+
+# ===== Cache local =====
+*.swp

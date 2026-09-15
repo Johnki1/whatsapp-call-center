@@ -10,7 +10,9 @@ services:
     ports:
       # El puerto 5433 es SOLO para acceso desde el host (WSL2).
       # Dentro de la red docker, el backend usa postgres:5432.
-      - "5433:5432"
+      # Publicado SOLO en loopback: en producción nada externo
+      # debe alcanzar PostgreSQL directamente (Nginx no lo usa).
+      - "127.0.0.1:5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     networks:
@@ -38,8 +40,20 @@ services:
       FLYWAY_DB_PASSWORD: ${POSTGRES_PASSWORD:-botwap_dev_password}
       BOT_WHATSAPP_CLIENT: ${BOT_WHATSAPP_CLIENT:-mock}
       WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-change_me_webhook_verify_token}
+      # Integración Meta (perfil "meta"): valores provistos por .env
+      # generado por Ansible a partir de Azure Key Vault (Fase 7C-2).
+      WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
+      WHATSAPP_APP_SECRET: ${WHATSAPP_APP_SECRET:-}
+      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+      WHATSAPP_WABA_ID: ${WHATSAPP_WABA_ID:-}
+      WHATSAPP_APP_ID: ${WHATSAPP_APP_ID:-}
+      WHATSAPP_API_VERSION: ${WHATSAPP_API_VERSION:-v25.0}
+      WHATSAPP_GRAPH_BASE_URL: ${WHATSAPP_GRAPH_BASE_URL:-https://graph.facebook.com}
     ports:
-      - "8080:8080"
+      # Publicado SOLO en loopback: Nginx (reverse proxy) es la única
+      # puerta de entrada pública. El NSG de Azure bloquea 8080, y este
+      # binding añade defensa en profundidad.
+      - "127.0.0.1:8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
