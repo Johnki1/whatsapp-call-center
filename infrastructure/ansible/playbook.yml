@@ -137,7 +137,7 @@
       ansible.builtin.copy:
         content: >-
           deb [arch=amd64]
-          https://packages.microsoft.com/ubuntu/{{ ansible_distribution_major_version }}.04/prod
+          https://packages.microsoft.com/repos/azure-cli/
           {{ ansible_distribution_release }} main
         dest: /etc/apt/sources.list.d/azure-cli.list
         mode: "0644"
