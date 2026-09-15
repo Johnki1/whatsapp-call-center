@@ -20,7 +20,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.PessimisticLockingFailureException;
+import org.springframework.dao.TransientDataAccessResourceException;
+import com.botwap.application.exception.ConcurrencyConflictException;
 import reactor.core.publisher.Mono;
 
 import java.time.Instant;
@@ -62,14 +64,25 @@ public class InboundMessageOrchestrator {
      * <ul>
      *   <li>Lectura optimista previa de {@code wa_message_id} para rechazar
      *       reintentos rapidos del webhook sin tocar la transaccion.</li>
-     *   <li>Captura de {@link DataIntegrityViolationException} en
-     *       {@link #processNewInbound} como red de seguridad ante condiciones de
-     *       carrera: si dos hilos ingresan el mismo {@code wamid} casi al mismo
-     *       tiempo, solo uno gana el INSERT y el otro ve la excepcion de
-     *       constraint, que interpretamos como "duplicado ya persistido" y se
-     *       convierte en exito silencioso (idempotencia garantizada por la clave
-     *       unica en base de datos, no por memoria).</li>
+     *   <li>Captura de {@link DataIntegrityViolationException} FUERA de la
+     *       transaccion como red de seguridad ante condiciones de carrera: si
+     *       dos hilos ingresan el mismo {@code wamid} casi al mismo tiempo,
+     *       solo uno gana el INSERT y el otro ve la excepcion de constraint,
+     *       que interpretamos como "duplicado ya persistido" y se convierte en
+     *       exito silencioso (idempotencia garantizada por la clave unica en
+     *       base de datos, no por memoria).</li>
      * </ul>
+     *
+     * <p><b>Regla critica R2DBC/Postgres:</b> NUNCA se captura (swallow) un
+     * error DENTRO de {@code tx.execute(...)}. En Postgres, cualquier sentencia
+     * fallida aborta la transaccion completa; tragar el error y continuar deja
+     * la transaccion en estado ABORTED y el commit final falla con
+     * {@code "The database returned ROLLBACK"} (mapeado por Spring a
+     * {@code PessimisticLockingFailureException}), lo que rompia el webhook con
+     * HTTP 500 hacia Meta. Por eso todo el bloque transaccional es estricto
+     * (fail-fast): cualquier fallo aborta y hace rollback limpio, y la
+     * clasificacion benigno vs. error se hace FUERA, sobre el Mono ya
+     * transaccionado.</p>
      */
     public Mono<Void> processInbound(String waId, String wamid, String text) {
         log.warn("DIAG processInbound: waId={} wamid={} text='{}'", waId, wamid, text);
@@ -77,14 +90,37 @@ public class InboundMessageOrchestrator {
                 .flatMap(exists -> {
                     if (exists) {
                         log.info("Mensaje duplicado ignorado: wamid={}", wamid);
-                        return Mono.empty();
+                        return Mono.<Void>empty();
                     }
                     return processNewInbound(waId, wamid, text);
                 })
                 .onErrorResume(DataIntegrityViolationException.class,
                         e -> {
                             // Condicion de carrera: el wamid ya fue insertado por otro hilo.
+                            // Ocurre FUERA de tx (o como rollback limpio de tx): es benigno.
                             log.info("Mensaje duplicado por carrera de concurrencia: wamid={} {}", wamid, e.getMessage());
+                            return Mono.empty();
+                        })
+                .onErrorResume(ConcurrencyConflictException.class,
+                        e -> {
+                            // Optimistic-lock perdido (dos webhooks concurrentes del mismo
+                            // wa_id). Meta reintentara; el reintento leera el estado nuevo.
+                            // Se considera benigno: ack para no provocar retry-storm.
+                            log.info("Conflicto de concurrencia procesando wamid={}: {}", wamid, e.getMessage());
+                            return Mono.empty();
+                        })
+                .onErrorResume(PessimisticLockingFailureException.class,
+                        e -> {
+                            // Commit sobre tx abortada / lock concurrente. Ya hubo rollback
+                            // limpio en Postgres; no hay estado parcial. Se traga aqui
+                            // (FUERA de tx) para que el controlador pueda responder 200.
+                            log.warn("Fallo de commit/lock procesando wamid={} (rollback limpio, sin estado parcial): {}",
+                                    wamid, e.getMessage());
+                            return Mono.empty();
+                        })
+                .onErrorResume(TransientDataAccessResourceException.class,
+                        e -> {
+                            log.warn("Fallo transitorio de BD procesando wamid={}: {}", wamid, e.getMessage());
                             return Mono.empty();
                         });
     }
@@ -130,17 +166,17 @@ public class InboundMessageOrchestrator {
 
         Mono<OutboxMessage> outboxMono = buildOutbox(outbound, waId);
 
-        return Mono.zip(saveConversation, saveInbound, saveOutbound, saveSelection)
-                .then(outboxMono.flatMap(outbox -> outboxRepository.save(outbox)
-                        .onErrorResume(DataAccessResourceFailureException.class, e -> {
-                            log.error("Error inserting outbox_message, transaction will continue without it", e);
-                            return Mono.just(outbox);
-                        })))
-                .then(messageRepository.markReceivedAsProcessed(inbound.id())
-                        .onErrorResume(DataAccessResourceFailureException.class, e -> {
-                            log.error("Could not mark inbound message as processed", e);
-                            return Mono.empty();
-                        }))
+        // Secuencial (no Mono.zip): evita carreras entre el INSERT del outbox
+        // (FK -> message.id) y el INSERT del outbound, y da un orden deterministico.
+        // Estrictamente fail-fast: SIN onErrorResume aqui dentro. Tragar errores
+        // dentro de tx deja a Postgres en ABORTED y el commit falla con
+        // "The database returned ROLLBACK" -> HTTP 500 a Meta.
+        return saveConversation
+                .then(saveInbound)
+                .then(saveOutbound)
+                .then(saveSelection)
+                .then(outboxMono.flatMap(outboxRepository::save))
+                .then(messageRepository.markReceivedAsProcessed(inbound.id()))
                 .then();
     }
 

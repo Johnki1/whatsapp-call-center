@@ -114,9 +114,14 @@ public class WhatsAppWebhookController {
                             }));
                 })
                 .onErrorResume(e -> {
-                    log.error("[WEBHOOK] Error no controlado procesando mensaje inbound ({}: {}). Se responde 500.",
+                    // Contrato Meta: el webhook SIEMPRE responde 200 OK (salvo firma
+                    // invalida, que es 400). Un 500 provoca reintentos agresivos de
+                    // Meta -> tormenta de duplicados -> mas contencion en BD.
+                    // El orquestador ya hizo rollback limpio; aqui solo se registra
+                    // y se hace ack para cortar el ciclo de reintentos.
+                    log.error("[WEBHOOK] Error no controlado procesando mensaje inbound ({}: {}). Rollback limpio, se responde 200 para evitar reintentos de Meta.",
                             e.getClass().getName(), e.getMessage(), e);
-                    return Mono.just(ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).<Void>build());
+                    return Mono.just(ResponseEntity.ok().<Void>build());
                 });
     }
 
