@@ -3,16 +3,49 @@
 # ============================================================
 # GENERADO POR ANSIBLE — NO editar manualmente en el servidor.
 #
-# Escucha en :80 para {{ dominio }} y redirige al backend
-# Spring Boot (contenedor publicado en 127.0.0.1:{{ backend_port }}).
-# Certbot --nginx añadirá automáticamente el bloque :443 y la
-# redirección permanente a HTTPS tras emitir el certificado.
+# Si el certificado Let's Encrypt YA existe en la VM, se despliegan
+# dos bloques: :80 con redireccion 301 permanente a HTTPS + :443
+# ssl con proxy al backend Spring Boot (127.0.0.1:{{ backend_port }}).
+# Si aun NO existe (bootstrap inicial), se despliega solo :80 en
+# plano para que Certbot pueda completar el challenge ACME HTTP-01;
+# tras emitir el cert, el playbook redespliega esta misma plantilla.
 # ============================================================
 
 server {
     listen 80;
     listen [::]:80;
     server_name {{ dominio }};
+
+{% if tls_cert is defined and tls_cert.stat.exists %}
+    # Certificado ya emitido: todo el trafico plano va a HTTPS.
+    # Meta exige HTTPS en el webhook, asi que no se sirve nada por :80.
+    return 301 https://$host$request_uri;
+{% else %}
+    # Bootstrap ACME: proxy temporal en plano para que Certbot
+    # complete el challenge HTTP-01. Tras emitir el cert, el
+    # playbook redespliega esta plantilla (rama 301 + :443).
+    location / {
+        proxy_pass http://127.0.0.1:{{ backend_port }};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+    }
+{% endif %}
+}
+
+{% if tls_cert is defined and tls_cert.stat.exists %}
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name {{ dominio }};
+
+    ssl_certificate /etc/letsencrypt/live/{{ dominio }}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{{ dominio }}/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
     # Webhooks de Meta: payloads JSON pequeños; margen prudente.
     client_max_body_size 2m;
@@ -30,3 +63,4 @@ server {
         proxy_send_timeout 60s;
     }
 }
+{% endif %}

@@ -264,8 +264,18 @@
       no_log: true
 
     # ============================================================
-    # 5. NGINX — Reverse proxy
+    # 5. NGINX — Reverse proxy (+ TLS si el cert ya existe)
     # ============================================================
+    # ORDEN IMPORTANTE: el stat del cert corre ANTES de renderizar
+    # la plantilla, porque la plantilla decide (rama if/else) si
+    # despliega :80+301+:443-ssl o el proxy temporal :80 de
+    # bootstrap ACME. Si Certbot emite el cert en esta misma
+    # corrida, la plantilla se redespliega justo despues (Fase 6).
+    - name: Comprobar si ya existe el certificado TLS
+      ansible.builtin.stat:
+        path: /etc/letsencrypt/live/{{ dominio }}/fullchain.pem
+      register: tls_cert
+
     - name: Desplegar configuración de Nginx (reverse proxy)
       ansible.builtin.template:
         src: templates/nginx-botwap.conf.j2
@@ -298,12 +308,9 @@
 
     # ============================================================
     # 6. HTTPS — Certificado Let's Encrypt
+    # NOTA: el stat ya corrió en la Fase 5 (antes de Nginx) y su
+    # registro tls_cert se reutiliza aquí. NO duplicar el stat.
     # ============================================================
-    - name: Comprobar si ya existe el certificado TLS
-      ansible.builtin.stat:
-        path: /etc/letsencrypt/live/{{ dominio }}/fullchain.pem
-      register: tls_cert
-
     # Preflight local: si el DNS no apunta a esta VM, Certbot falla
     # y se quema el rate limit de Let's Encrypt (5 certs/semana).
     # Fallar aquí, antes del intento, lo evita.
@@ -326,6 +333,39 @@
       when: not tls_cert.stat.exists
       register: certbot_result
       changed_when: certbot_result.rc == 0
+
+    # Certbot --nginx reescribe sites-available/botwap a su manera.
+    # Lo SOBREESCRIBIMOS con nuestra plantilla canónica (301 + :443
+    # ssl + proxy), que es la que pide el webhook de Meta. Sin este
+    # paso, la próxima corrida de Ansible restauraría la plantilla
+    # base :80 y rompería HTTPS (el incidente que estamos arreglando).
+    - name: Re-verificar certificado tras la emisión
+      ansible.builtin.stat:
+        path: /etc/letsencrypt/live/{{ dominio }}/fullchain.pem
+      register: tls_cert_after
+      when: not tls_cert.stat.exists
+
+    - name: Redesplegar Nginx con bloque SSL canónico (post-Certbot)
+      ansible.builtin.template:
+        src: templates/nginx-botwap.conf.j2
+        dest: /etc/nginx/sites-available/botwap
+        owner: root
+        group: root
+        mode: "0644"
+      vars:
+        tls_cert: "{{ tls_cert_after }}"
+      when: not tls_cert.stat.exists
+      notify: Reiniciar Nginx
+
+    - name: Validar sintaxis de Nginx tras el redespliegue SSL
+      ansible.builtin.command:
+        cmd: nginx -t
+      changed_when: false
+      when: not tls_cert.stat.exists
+
+    - name: Aplicar reinicio de Nginx con la config SSL
+      ansible.builtin.meta: flush_handlers
+      when: not tls_cert.stat.exists
 
     - name: Habilitar renovación automática (certbot.timer)
       ansible.builtin.systemd:
