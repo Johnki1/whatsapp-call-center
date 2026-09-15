@@ -1,0 +1,26 @@
+# ============================================================
+# BotWap — Infraestructura base en Azure (Fase 7C)
+# PLANTILLA DE EJEMPLO — NO uses estos valores reales.
+# ------------------------------------------------------------
+# Copia este archivo a `terraform.tfvars` y reemplaza los
+# valores de ejemplo por los reales de tu entorno.
+# `terraform.tfvars` está ignorado por Git (.gitignore).
+#
+# NO incluyas aquí:
+#   - clave pública SSH real
+#   - secretos de Meta (access token, app secret, verify token)
+#   - credenciales de Azure
+#   - contraseñas
+# ============================================================
+
+project_name             = "botwap"
+environment              = "prod"
+location                 = "northcentralus"
+resource_group_name      = "botwap-prod-rg"
+vm_size                  = "Standard_B2als_v2"
+admin_username           = "azureadmin"
+# REEMPLAZA con tu propia clave pública SSH:
+ssh_public_key           = "ssh-ed25519 AAAA... ejemplo@example.com"
+vnet_address_space       = ["10.20.0.0/16"]
+subnet_address_prefix    = "10.20.1.0/24"
+allowed_ssh_source_cidr  = "190.121.129.156/32"

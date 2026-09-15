@@ -1,0 +1,36 @@
+# ============================================================
+# BotWap — Infraestructura base en Azure (Fase 7C)
+# Reglas de exclusión de Git para la carpeta Terraform.
+# ============================================================
+
+# ===== Estado y caché local de Terraform =====
+# El .terraform.lock.hcl (fija versiones/hashes de providers) SE VERSIONA
+# a propósito para que la infraestructura sea reproducible entre máquinas.
+.terraform/
+*.tfstate
+*.tfstate.*
+
+# ===== Archivos de plan =====
+*.tfplan
+*.tfplan.*
+
+# ===== Variables reales =====
+# terraform.tfvars contiene la clave pública SSH real → NO versionar.
+# Se permite explícitamente la plantilla de ejemplo.
+*.tfvars
+!terraform.tfvars.example
+!*.tfvars.example
+
+# ===== Overrides locales =====
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# ===== Configuración local del CLI =====
+.terraformrc
+terraform.rc
+
+# ===== Crashes y logs =====
+crash.log
+crash.*.log
