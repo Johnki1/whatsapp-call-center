@@ -20,6 +20,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.DataAccessResourceFailureException;
 import reactor.core.publisher.Mono;
 
 import java.time.Instant;
@@ -130,8 +131,16 @@ public class InboundMessageOrchestrator {
         Mono<OutboxMessage> outboxMono = buildOutbox(outbound, waId);
 
         return Mono.zip(saveConversation, saveInbound, saveOutbound, saveSelection)
-                .then(outboxMono.flatMap(outbox -> outboxRepository.save(outbox)))
-                .then(messageRepository.markReceivedAsProcessed(inbound.id()))
+                .then(outboxMono.flatMap(outbox -> outboxRepository.save(outbox)
+                        .onErrorResume(DataAccessResourceFailureException.class, e -> {
+                            log.error("Error inserting outbox_message, transaction will continue without it", e);
+                            return Mono.just(outbox);
+                        })))
+                .then(messageRepository.markReceivedAsProcessed(inbound.id())
+                        .onErrorResume(DataAccessResourceFailureException.class, e -> {
+                            log.error("Could not mark inbound message as processed", e);
+                            return Mono.empty();
+                        }))
                 .then();
     }
 

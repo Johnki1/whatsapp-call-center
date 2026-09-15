@@ -6,8 +6,11 @@ import com.botwap.domain.model.OutboxStatus;
 import com.botwap.domain.port.OutboxRepository;
 import com.botwap.infrastructure.persistence.repository.ReactiveOutboxEntityRepository;
 import io.r2dbc.spi.Row;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.stereotype.Component;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -32,6 +35,8 @@ import java.util.UUID;
  */
 @Component
 public class R2dbcOutboxRepositoryAdapter implements OutboxRepository {
+
+    private static final Logger log = LoggerFactory.getLogger(R2dbcOutboxRepositoryAdapter.class);
 
     private final ReactiveOutboxEntityRepository repository;
     private final DatabaseClient databaseClient;
@@ -66,7 +71,15 @@ public class R2dbcOutboxRepositoryAdapter implements OutboxRepository {
                         outboxMessage.sentAt() == null
                                 ? null
                                 : OffsetDateTime.ofInstant(outboxMessage.sentAt(), ZoneOffset.UTC))
-                .map(rows -> outboxMessage);
+                .map(rows -> outboxMessage)
+                // Si la sentencia SQL falla, no abortamos la transacción global;
+                // simplemente registramos el error y dejamos que la transacción continúe.
+                // El outbox quedará sin insertar y será responsabilidad del poller reintentar
+                // en futuros ciclos (si el error es transitorio) o será inspeccionado manualmente.
+                .onErrorResume(DataAccessResourceFailureException.class, e -> {
+                    log.error("Error inserting outbox_message (transaccion no abortada)", e);
+                    return Mono.just(outboxMessage);
+                });
     }
 
     @Override

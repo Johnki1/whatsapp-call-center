@@ -42,7 +42,7 @@ public class R2dbcConversationSelectionRepositoryAdapter
                         selection.stateKey(),
                         selection.optionKey(),
                         selection.displayLabel(),
-                        selection.metadata(),
+                        selection.metadata() == null ? "{}" : selection.metadata(),
                         OffsetDateTime.ofInstant(selection.selectedAt(), java.time.ZoneOffset.UTC))
                 .map(rows -> selection);
     }
