@@ -3,7 +3,9 @@ package com.botwap.infrastructure.whatsapp;
 import com.botwap.config.WhatsAppProperties;
 import com.botwap.domain.model.WhatsAppSendResult;
 import com.botwap.domain.port.WhatsAppClient;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.netty.channel.ChannelOption;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -53,12 +55,16 @@ public class MetaWhatsAppClient implements WhatsAppClient {
 
     private static final String MESSAGING_PRODUCT = "whatsapp";
     private static final String MESSAGE_TYPE_TEXT = "text";
+    private static final String MESSAGE_TYPE_INTERACTIVE = "interactive";
     private static final String FIELD_MESSAGES = "messages";
     private static final String FIELD_ERROR = "error";
     /** Coincide con {@code outbox_message.last_error VARCHAR(255)}. */
     private static final int MAX_ERROR_LENGTH = 255;
     private static final long DEFAULT_TIMEOUT_MS = 10_000L;
     private static final long DEFAULT_CONNECT_TIMEOUT_MS = 5_000L;
+
+    /** Para interpretar el payload semántico del Outbox (no confidencial). */
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     private final String apiVersion;
     private final String phoneNumberId;
@@ -102,30 +108,33 @@ public class MetaWhatsAppClient implements WhatsAppClient {
     }
 
     /**
-     * Envía un mensaje de texto a través de la Graph API de Meta.
+     * Envía el payload del Outbox a través de la Graph API de Meta.
+     *
+     * <p>Traduce el payload semántico al cuerpo de la API:
+     * <ul>
+     *   <li>{@code {"text": "…"}} → mensaje de texto.</li>
+     *   <li>{@code {"text": "…", "interactive": {…}}} → mensaje interactivo
+     *       nativo ({@code type: "interactive"} con botones o lista).</li>
+     * </ul>
      *
      * <p>Completamente reactivo: no bloquea en ningún punto. Los errores de
      * validación y los errores HTTP se propagan como {@code Mono.error} para que
      * el {@code OutboxPoller} decida el reintento.</p>
      *
-     * @param waId número destino en formato Meta (solo dígitos, sin {@code +})
-     * @param text cuerpo del mensaje
+     * @param waId        número destino en formato Meta (solo dígitos, sin {@code +})
+     * @param payloadJson payload semántico del Outbox (ver {@link #buildBody})
      * @return {@code Mono} con el {@code wamid} confirmado por Meta
      */
     @Override
-    public Mono<WhatsAppSendResult> sendMessage(String waId, String text) {
+    public Mono<WhatsAppSendResult> sendMessage(String waId, String payloadJson) {
         if (waId == null || waId.isBlank()) {
             return Mono.error(new IllegalArgumentException("waId is required to send a WhatsApp message"));
         }
-        if (text == null || text.isBlank()) {
-            return Mono.error(new IllegalArgumentException("text is required to send a WhatsApp message"));
+        if (payloadJson == null || payloadJson.isBlank()) {
+            return Mono.error(new IllegalArgumentException("payload is required to send a WhatsApp message"));
         }
 
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("messaging_product", MESSAGING_PRODUCT);
-        body.put("to", waId);
-        body.put("type", MESSAGE_TYPE_TEXT);
-        body.put("text", Map.of("body", text));
+        Map<String, Object> body = buildBody(waId, payloadJson);
 
         return webClient.post()
                 .uri("/{apiVersion}/{phoneNumberId}/messages", apiVersion, phoneNumberId)
@@ -134,6 +143,42 @@ public class MetaWhatsAppClient implements WhatsAppClient {
                 .exchangeToMono(this::toResult)
                 .doOnError(error -> log.warn("MetaWhatsAppClient: envío fallido a waId={} ({})",
                         waId, safeDescription(error)));
+    }
+
+    /**
+     * Construye el cuerpo de la Graph API a partir del payload semántico.
+     *
+     * <p>Si el payload contiene el nodo {@code interactive}, el mensaje se envía
+     * como {@code type=interactive} reenviando ese nodo íntegro (Meta valida
+     * botones/lista); en caso contrario, como texto.</p>
+     */
+    private Map<String, Object> buildBody(String waId, String payloadJson) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("messaging_product", MESSAGING_PRODUCT);
+        body.put("to", waId);
+
+        JsonNode payload = parsePayload(payloadJson);
+        JsonNode interactive = payload == null ? null : payload.path("interactive");
+        if (interactive != null && interactive.isObject()) {
+            body.put("type", MESSAGE_TYPE_INTERACTIVE);
+            body.put("interactive", interactive);
+            return body;
+        }
+
+        String text = payload == null ? "" : payload.path("text").asText("");
+        body.put("type", MESSAGE_TYPE_TEXT);
+        body.put("text", Map.of("body", text));
+        return body;
+    }
+
+    /** Parsea el payload JSON del Outbox; nunca propaga errores de formato. */
+    private JsonNode parsePayload(String payloadJson) {
+        try {
+            return objectMapper.readTree(payloadJson);
+        } catch (JsonProcessingException e) {
+            log.error("Payload del outbox no es JSON válido; se envía como texto vacío");
+            return null;
+        }
     }
 
     /**

@@ -39,6 +39,7 @@ public class WhatsAppWebhookController {
     private static final String SIGNATURE_HEADER = "X-Hub-Signature-256";
     private static final String FIELD_MESSAGES = "messages";
     private static final String MESSAGE_TYPE_TEXT = "text";
+    private static final String MESSAGE_TYPE_INTERACTIVE = "interactive";
 
     private final WhatsAppProperties properties;
     private final WebhookSignatureVerifier signatureVerifier;
@@ -105,7 +106,8 @@ public class WhatsAppWebhookController {
                             .flatMap(extracted -> {
                                 log.info("Procesando mensaje inbound: wa_id={}, wamid={}",
                                         extracted.waId(), extracted.wamid());
-                                return orchestrator.processInbound(extracted.waId(), extracted.wamid(), extracted.text())
+                                return orchestrator.processInbound(extracted.waId(), extracted.wamid(),
+                                                extracted.text(), extracted.profileName())
                                         .thenReturn(ResponseEntity.ok().<Void>build());
                             })
                             .switchIfEmpty(Mono.defer(() -> {
@@ -126,10 +128,21 @@ public class WhatsAppWebhookController {
     }
 
     /**
-     * Extrae el primer mensaje de texto del payload de WhatsApp.
+     * Extrae el primer mensaje accionable del payload de WhatsApp.
      *
-     * @return {@code Mono<ExtractedMessage>} con wa_id, wamid y texto, o vacío si
-     *         el payload no contiene mensajes de texto (p. ej. solo {@code statuses}).
+     * <p>Tipos soportados:
+     * <ul>
+     *   <li>{@code text}: el cuerpo del mensaje (texto libre).</li>
+     *   <li>{@code interactive}: el id de la opción tocada
+     *       ({@code button_reply.id} / {@code list_reply.id}), que coincide con el
+     *       {@code optionKey} enviado en el payload interactivo del Outbox.</li>
+     * </ul>
+     * Además extrae el nombre público del perfil de WhatsApp
+     * ({@code contacts[0].profile.name}) para personalizar el bot.
+     *
+     * @return {@code Mono<ExtractedMessage>} con wa_id, wamid, texto y nombre de
+     *         perfil, o vacío si el payload no contiene mensajes accionables
+     *         (p. ej. solo {@code statuses}).
      */
     private Mono<ExtractedMessage> extractInbound(String rawBody) {
         try {
@@ -155,19 +168,21 @@ public class WhatsAppWebhookController {
             }
 
             JsonNode msg = messages.get(0);
-            if (!MESSAGE_TYPE_TEXT.equals(msg.path("type").asText())) {
+            String text = extractText(msg);
+            if (text == null) {
                 return Mono.empty();
             }
 
             String waId = msg.path("from").asText(null);
             String wamid = msg.path("id").asText(null);
-            String text = msg.path("text").path("body").asText(null);
+            String profileName = value.path("contacts").path(0)
+                    .path("profile").path("name").asText(null);
 
-            if (waId == null || wamid == null || text == null) {
+            if (waId == null || wamid == null) {
                 return Mono.empty();
             }
 
-            return Mono.just(new ExtractedMessage(waId, wamid, text));
+            return Mono.just(new ExtractedMessage(waId, wamid, text, profileName));
         } catch (JsonProcessingException e) {
             // Incluye el body completo: si Meta envia un campo inesperado, el stacktrace
             // + el payload permiten diagnosticar sin reproducir el request.
@@ -179,7 +194,21 @@ public class WhatsAppWebhookController {
         }
     }
 
+    /** Texto accionable del mensaje: cuerpo de texto o id de la opción interactiva. */
+    private String extractText(JsonNode msg) {
+        String type = msg.path("type").asText();
+        if (MESSAGE_TYPE_TEXT.equals(type)) {
+            return msg.path("text").path("body").asText(null);
+        }
+        if (MESSAGE_TYPE_INTERACTIVE.equals(type)) {
+            JsonNode interactive = msg.path("interactive");
+            String id = interactive.path("button_reply").path("id").asText(null);
+            return id != null ? id : interactive.path("list_reply").path("id").asText(null);
+        }
+        return null;
+    }
+
     /** Resultado de la extraccion de un mensaje inbound del payload de WhatsApp. */
-    private record ExtractedMessage(String waId, String wamid, String text) {
+    private record ExtractedMessage(String waId, String wamid, String text, String profileName) {
     }
 }

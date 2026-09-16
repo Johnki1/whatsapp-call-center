@@ -5,8 +5,6 @@ import com.botwap.domain.model.OutboxMessage;
 import com.botwap.domain.model.WhatsAppSendResult;
 import com.botwap.domain.port.OutboxRepository;
 import com.botwap.domain.port.WhatsAppClient;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -23,7 +21,7 @@ import java.time.Instant;
  * <ol>
  *   <li>Buscar mensajes PENDING elegibles (con backoff respetado).</li>
  *   <li>Reclamarlos atómicamente (PENDING → SENDING con lease).</li>
- *   <li>Enviar vía {@link WhatsAppClient}.</li>
+ *   <li>Enviar el payload (texto o interactivo) vía {@link WhatsAppClient}.</li>
  *   <li>Marcar SENT en éxito, o PENDING/FAILED en error según reintentos.</li>
  * </ol>
  *
@@ -44,16 +42,13 @@ public class OutboxPoller {
     private final OutboxRepository outboxRepository;
     private final WhatsAppClient whatsAppClient;
     private final OutboxProperties properties;
-    private final ObjectMapper objectMapper;
 
     public OutboxPoller(OutboxRepository outboxRepository,
                         WhatsAppClient whatsAppClient,
-                        OutboxProperties properties,
-                        ObjectMapper objectMapper) {
+                        OutboxProperties properties) {
         this.outboxRepository = outboxRepository;
         this.whatsAppClient = whatsAppClient;
         this.properties = properties;
-        this.objectMapper = objectMapper;
     }
 
     /**
@@ -103,11 +98,24 @@ public class OutboxPoller {
      * </ol>
      */
     private Mono<Void> processOne(OutboxMessage message) {
-        String text = extractText(message.payload());
+        if (message.attempts() > properties.maxAttempts()) {
+            // La recuperación por lease vencido (crash recovery) no acota intentos:
+            // sin este tope, una fila que se reclama una y otra vez se reenviaría
+            // indefinidamente (mensajes repetidos al usuario). Se falla de forma
+            // explícita y sin volver a enviar.
+            log.error("OutboxPoller: outboxId={} supera maxAttempts={} sin confirmar; se marca FAILED sin reenviar",
+                    message.id(), properties.maxAttempts());
+            return outboxRepository.markFailed(message.id(), Instant.now(),
+                    "Supera el maximo de intentos sin confirmacion (recuperacion por lease)").then();
+        }
+
         log.info("OutboxPoller: procesando outboxId={}, waId={}, attempt={}",
                 message.id(), message.waId(), message.attempts());
 
-        return whatsAppClient.sendMessage(message.waId(), text)
+        // El payload ya es el mensaje completo (texto o interactivo); el cliente
+        // de WhatsApp lo traduce al cuerpo de la Graph API. Nunca se registra el
+        // contenido en logs (datos personales del usuario).
+        return whatsAppClient.sendMessage(message.waId(), message.payload())
                 .flatMap(result -> {
                     log.info("OutboxPoller: envío exitoso outboxId={}, wamid={}",
                             message.id(), result.wamid());
@@ -134,21 +142,5 @@ public class OutboxPoller {
                     }
                 })
                 .then();
-    }
-
-    /**
-     * Extrae el campo "text" del payload JSON del Outbox.
-     *
-     * <p>Si el JSON es inválido o no contiene "text", devuelve cadena vacía.</p>
-     */
-    private String extractText(String payload) {
-        try {
-            JsonNode node = objectMapper.readTree(payload);
-            JsonNode textNode = node.get("text");
-            return textNode != null && !textNode.isNull() ? textNode.asText() : "";
-        } catch (Exception e) {
-            log.warn("OutboxPoller: no se pudo parsear payload del outbox: {}", e.getMessage());
-            return "";
-        }
     }
 }

@@ -40,8 +40,16 @@ public record Message(
 
     /** Mensaje de respuesta del bot, pendiente de envío (Outbox). */
     public static Message outboundPending(UUID conversationId, String content) {
+        return outboundPending(conversationId, content, MessageType.TEXT);
+    }
+
+    /**
+     * Mensaje de respuesta del bot pendiente de envío, con el tipo explícito
+     * ({@code TEXT} o {@code INTERACTIVE} para la UI nativa de Meta).
+     */
+    public static Message outboundPending(UUID conversationId, String content, MessageType type) {
         return new Message(UUID.randomUUID(), conversationId, null, MessageDirection.OUTBOUND,
-                MessageStatus.PENDING, MessageType.TEXT, content, Instant.now(), null);
+                MessageStatus.PENDING, type, content, Instant.now(), null);
     }
 
     public Message withStatus(MessageStatus newStatus) {

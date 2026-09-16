@@ -14,9 +14,11 @@ import java.util.UUID;
 /**
  * Acceso R2DBC a {@code conversation_selection}.
  *
- * <p>Una fila por nivel: el {@code upsert} usa {@code ON CONFLICT
- * (conversation_id, level)} (índice único) para actualizar la selección del
- * nivel al navegar de vuelta.</p>
+ * <p>El {@code upsert} usa {@code ON CONFLICT (conversation_id, level, state_key)}
+ * (índice único) para actualizar la selección al navegar de vuelta. La lectura
+ * es determinista ({@code ORDER BY level, selected_at}) porque un mismo nivel
+ * puede tener varias filas con distinto {@code state_key} cuando el usuario
+ * cambia de rama.</p>
  */
 public interface ReactiveConversationSelectionEntityRepository
         extends ReactiveCrudRepository<ConversationSelectionEntity, UUID> {
@@ -26,6 +28,7 @@ public interface ReactiveConversationSelectionEntityRepository
                    CAST(metadata AS TEXT) AS metadata, selected_at
             FROM conversation_selection
             WHERE conversation_id = :conversationId
+            ORDER BY level, selected_at, id
             """)
     Flux<ConversationSelectionEntity> findByConversationId(@Param("conversationId") UUID conversationId);
 

@@ -63,7 +63,7 @@ Documento de referencia de la arquitectura del bot de atención al cliente por W
 |---|---|---|
 | `WebhookController` | infra | GET verify (challenge) y POST de eventos de Meta. Solo **Fase A**: responde 200 tras el COMMIT (procesamiento duradero). |
 | `WebhookSignatureVerifier` | infra | Valida `X-Hub-Signature-256` (HMAC-SHA256 con app_secret; comparación en tiempo constante). |
-| `InboundMessageOrchestrator` | application | Orquesta la Fase A: dedupe → transacción R2DBC (cargar/crear conversación, engine, estado+selecciones) → insert mensaje saliente + outbox → responder 200. |
+| `InboundMessageOrchestrator` | application | Orquesta la Fase A: dedupe → transacción R2DBC (cargar/crear conversación, engine, estado+selecciones) → insert mensaje saliente + outbox → responder 200. Si la conversación está en estado terminal (`FINAL`/`CANCELLED`) y el mensaje no reinicia explícitamente, solo registra el entrante: **no hay respuesta** (silencio). |
 | `ConversationEngine` | domain | Resuelve el handler según el estado actual y ejecuta la transición. |
 | `ConversationStateHandler` (uno por estado) | domain | Valida la entrada, produce respuesta, siguiente estado y selección a registrar. Registro tipo `Map<State, Handler>`. |
 | `ConversationRepository` (port) | domain | Operaciones de persistencia de conversación, selecciones y mensajes. |

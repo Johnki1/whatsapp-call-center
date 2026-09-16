@@ -10,13 +10,16 @@ import java.util.UUID;
  * Peticion al motor conversacional: la entrada del usuario interpretada en el
  * contexto del estado actual de su conversacion.
  *
- * @param selections selecciones previamente persistadas en esta conversacion
- *                   (permite a los handlers validar contra el contexto real).
+ * @param userName    nombre público del perfil de WhatsApp (nullable; permite
+ *                    personalizar saludos y prompts)
+ * @param selections  selecciones previamente persistadas en esta conversacion
+ *                    (permite a los handlers validar contra el contexto real)
  */
 public record EngineRequest(
         UUID conversationId,
         String waId,
         String input,
         ConversationState currentState,
+        String userName,
         List<ConversationSelection> selections) {
 }

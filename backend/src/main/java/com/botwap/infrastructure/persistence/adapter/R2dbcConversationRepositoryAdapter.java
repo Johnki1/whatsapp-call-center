@@ -52,6 +52,11 @@ public class R2dbcConversationRepositoryAdapter implements ConversationRepositor
     }
 
     @Override
+    public Mono<Conversation> findLatestByWaIdForUpdate(String waId) {
+        return repository.findLatestByWaIdForUpdate(waId).map(this::toDomain);
+    }
+
+    @Override
     public Mono<Conversation> insert(Conversation conversation) {
         log.warn("DIAG save: INSERT branch, id={} newState={}", conversation.id(), conversation.state());
         return repository.insertConversation(
@@ -62,7 +67,8 @@ public class R2dbcConversationRepositoryAdapter implements ConversationRepositor
                         0L,
                         toOffset(conversation.createdAt()),
                         toOffset(conversation.updatedAt()),
-                        toOffsetOrNull(conversation.closedAt()))
+                        toOffsetOrNull(conversation.closedAt()),
+                        conversation.profileName())
                 .map(rows -> conversation.withVersion(0L))
                 .onErrorMap(DataIntegrityViolationException.class,
                         e -> new DomainException("No se pudo crear la conversación (¿ya existe una activa?)", e));
@@ -81,13 +87,14 @@ public class R2dbcConversationRepositoryAdapter implements ConversationRepositor
                         newVersion,
                         toOffset(now),
                         toOffsetOrNull(conversation.closedAt()),
+                        conversation.profileName(),
                         conversation.version())
                 .flatMap(rows -> {
                     log.warn("DIAG update: id={} rows={} newState={} expectedVersion={}",
                             conversation.id(), rows, conversation.state(), conversation.version());
                     return rows == 1
                             ? Mono.just(new Conversation(conversation.id(), conversation.waId(), conversation.state(), conversation.status(),
-                                    newVersion, conversation.createdAt(), now, conversation.closedAt()))
+                                    conversation.profileName(), newVersion, conversation.createdAt(), now, conversation.closedAt()))
                             : Mono.error(new ConcurrencyConflictException(conversation.id()));
                 });
     }
@@ -98,6 +105,7 @@ public class R2dbcConversationRepositoryAdapter implements ConversationRepositor
                 e.getWaId(),
                 ConversationState.valueOf(e.getState()),
                 ConversationStatus.valueOf(e.getStatus()),
+                e.getProfileName(),
                 e.getVersion(),
                 e.getCreatedAt(),
                 e.getUpdatedAt(),

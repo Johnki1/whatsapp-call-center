@@ -21,7 +21,7 @@ public interface ReactiveConversationEntityRepository
         extends ReactiveCrudRepository<ConversationEntity, UUID> {
 
     String SELECT_ALL = """
-            SELECT id, wa_id, state, status, version, created_at, updated_at, closed_at
+            SELECT id, wa_id, state, status, profile_name, version, created_at, updated_at, closed_at
             FROM conversation
             """;
 
@@ -31,11 +31,15 @@ public interface ReactiveConversationEntityRepository
     @Query(SELECT_ALL + "WHERE wa_id = :waId AND status = 'ACTIVE' FOR UPDATE")
     Mono<ConversationEntity> findActiveByWaIdForUpdate(@Param("waId") String waId);
 
+    @Query(SELECT_ALL + "WHERE wa_id = :waId ORDER BY created_at DESC, id DESC LIMIT 1 FOR UPDATE")
+    Mono<ConversationEntity> findLatestByWaIdForUpdate(@Param("waId") String waId);
+
     @Modifying
     @Query("""
-            INSERT INTO conversation (id, wa_id, state, status, version, created_at, updated_at, closed_at)
-            VALUES (:id, :waId, :state, :status, :version, :createdAt, :updatedAt, :closedAt)
-            """)
+            INSERT INTO conversation (id, wa_id, state, status, version, created_at, updated_at, closed_at, profile_name)
+            VALUES (:id, :waId, :state, :status, :version, :createdAt, :updatedAt, :closedAt, :profileName)
+            """
+    )
     Mono<Integer> insertConversation(@Param("id") UUID id,
                                      @Param("waId") String waId,
                                      @Param("state") String state,
@@ -43,7 +47,8 @@ public interface ReactiveConversationEntityRepository
                                      @Param("version") long version,
                                      @Param("createdAt") OffsetDateTime createdAt,
                                      @Param("updatedAt") OffsetDateTime updatedAt,
-                                     @Param("closedAt") OffsetDateTime closedAt);
+                                     @Param("closedAt") OffsetDateTime closedAt,
+                                     @Param("profileName") String profileName);
 
     @Modifying
     @Query("""
@@ -52,7 +57,8 @@ public interface ReactiveConversationEntityRepository
                 status = :status,
                 version = :newVersion,
                 updated_at = :updatedAt,
-                closed_at = :closedAt
+                closed_at = :closedAt,
+                profile_name = COALESCE(:profileName, profile_name)
             WHERE id = :id AND version = :expectedVersion
             """)
     Mono<Integer> updateConversation(@Param("id") UUID id,
@@ -61,5 +67,6 @@ public interface ReactiveConversationEntityRepository
                                      @Param("newVersion") long newVersion,
                                      @Param("updatedAt") OffsetDateTime updatedAt,
                                      @Param("closedAt") OffsetDateTime closedAt,
+                                     @Param("profileName") String profileName,
                                      @Param("expectedVersion") long expectedVersion);
 }

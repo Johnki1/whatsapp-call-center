@@ -33,7 +33,7 @@ public class MockWhatsAppClient implements WhatsAppClient {
     private volatile String failureMessage = "Simulated failure from MockWhatsAppClient";
 
     @Override
-    public Mono<WhatsAppSendResult> sendMessage(String waId, String text) {
+    public Mono<WhatsAppSendResult> sendMessage(String waId, String payloadJson) {
         return Mono.fromSupplier(() -> {
             int attempt = callCount.incrementAndGet();
             log.info("[mock-whatsapp] intento #{} a {} (sin contenido en logs)", attempt, waId);

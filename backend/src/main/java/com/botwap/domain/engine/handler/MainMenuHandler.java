@@ -1,21 +1,26 @@
 package com.botwap.domain.engine.handler;
 
+import com.botwap.domain.engine.BotCopy;
 import com.botwap.domain.engine.InputNormalizer;
+import com.botwap.domain.engine.ServiceBranch;
 import com.botwap.domain.engine.StateHandler;
+import com.botwap.domain.menu.InteractiveOption;
+import com.botwap.domain.menu.MenuCatalog;
+import com.botwap.domain.menu.MenuOption;
 import com.botwap.domain.model.ConversationSelection;
 import com.botwap.domain.model.ConversationState;
-import com.botwap.domain.menu.MenuOption;
-import com.botwap.domain.menu.MenuCatalog;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
- * Handler del Nivel 1: MENU_PRINCIPAL.
+ * Handler del Nivel 1: menú principal.
  *
- * <p>Acepta:
- * - Saludos (hola) → repite el menu.
- * - Numeros 1-5 → categoria correspondiente (N2).
- * - Entradas invalidas → re-prompt sin cambiar de estado.</p>
+ * <p>Presenta el menú como <strong>mensaje interactivo nativo tipo lista</strong>
+ * (más de 3 opciones) con ids estables ({@code PURCHASE}, {@code RECHARGE}…).
+ * Por compatibilidad también acepta la selección por número ({@code 1}…{@code 5}).
+ * Saludos → bienvenida personalizada; comandos globales según el comando;
+ * entradas inválidas → re-prompt sin cambiar de estado.</p>
  */
 public final class MainMenuHandler implements StateHandler {
 
@@ -26,87 +31,46 @@ public final class MainMenuHandler implements StateHandler {
         if (InputNormalizer.isGlobalCommand(normalized)) {
             return handleGlobal(normalized);
         }
-
         if (InputNormalizer.isHello(normalized)) {
-            return Outcome.textOnly(renderMenu(), ConversationState.MAIN_MENU);
+            return menuOutcome(BotCopy.welcome(ctx.userName()));
         }
 
-        try {
-            int option = Integer.parseInt(normalized);
-            return handleNumeric(option);
-        } catch (NumberFormatException e) {
-            return Outcome.textOnly(
-                    "Entrada no reconocida. Selecciona 1, 2, 3, 4 o 5.\n\n" + renderMenu(),
-                    ConversationState.MAIN_MENU);
+        List<MenuOption> options = MenuCatalog.mainMenu();
+        Optional<MenuOption> selected = InputNormalizer.matchOption(options, normalized);
+        if (selected.isEmpty()) {
+            return menuOutcome(BotCopy.notUnderstood());
         }
+        return transitionTo(selected.get());
+    }
+
+    private Outcome transitionTo(MenuOption selected) {
+        ServiceBranch branch = ServiceBranch.fromOptionKey(selected.optionKey());
+        return Outcome.menu(
+                BotCopy.categoryPrompt(branch),
+                ConversationState.valueOf(branch.stateKey()),
+                ConversationSelection.unpersisted(1, "MAIN_MENU", selected.optionKey(),
+                        selected.label(), "{}"),
+                branchOptions(branch));
+    }
+
+    private Outcome menuOutcome(String text) {
+        return Outcome.menu(text, ConversationState.MAIN_MENU, null,
+                InteractiveOption.listOf(MenuCatalog.mainMenu()));
+    }
+
+    /** Opciones del Nivel 2 correspondientes a la rama elegida. */
+    static List<InteractiveOption> branchOptions(ServiceBranch branch) {
+        return InteractiveOption.listOf(MenuCatalog.optionsFor(branch.stateKey()));
     }
 
     private Outcome handleGlobal(String cmd) {
         return switch (cmd) {
-            case "menu" -> Outcome.textOnly(renderMenu(), ConversationState.MAIN_MENU);
-            case "cancelar" ->
-                    Outcome.textOnly("Tu conversacion ha sido cancelada. Escribe 'hola' para comenzar de nuevo.", ConversationState.CANCELLED);
-            case "volver" -> Outcome.textOnly(
-                    "Estas en el menu principal. Selecciona una opcion.\n\n" + renderMenu(),
-                    ConversationState.MAIN_MENU);
-            default -> Outcome.textOnly(renderMenu(), ConversationState.MAIN_MENU);
+            case "menu" -> Outcome.menu(BotCopy.backToMain(), ConversationState.MAIN_MENU, null,
+                    InteractiveOption.listOf(MenuCatalog.mainMenu()));
+            case "cancelar" -> Outcome.textOnly(BotCopy.cancelled(), ConversationState.CANCELLED);
+            default -> Outcome.menu(
+                    "🔙 Ya estás en el *menú principal*.\n\nElige una opción 👇",
+                    ConversationState.MAIN_MENU, null, InteractiveOption.listOf(MenuCatalog.mainMenu()));
         };
-    }
-
-    private Outcome handleNumeric(int option) {
-        List<MenuOption> opts = MenuCatalog.mainMenu();
-        if (option < 1 || option > opts.size()) {
-            return Outcome.textOnly(
-                    "Opcion no valida. Selecciona 1, 2, 3, 4 o 5.\n\n" + renderMenu(),
-                    ConversationState.MAIN_MENU);
-        }
-        MenuOption selected = opts.get(option - 1);
-        return transitionTo(selected);
-    }
-
-    private Outcome transitionTo(MenuOption option) {
-        return switch (option.optionKey()) {
-            case "PURCHASE" -> new Outcome(
-                    "¿Que deseas comprar?\n\n" + formatOptions(MenuCatalog.purchaseMenu()),
-                    ConversationState.PURCHASE_MENU,
-                    selectionFor("MAIN_MENU", "PURCHASE", option.displayLabel()));
-            case "RECHARGE" -> new Outcome(
-                    "¿Que deseas recargar?\n\n" + formatOptions(MenuCatalog.rechargeMenu()),
-                    ConversationState.RECHARGE_MENU,
-                    selectionFor("MAIN_MENU", "RECHARGE", option.displayLabel()));
-            case "COMPLAINT" -> new Outcome(
-                    "¿Sobre que deseas hacer un reclamo?\n\n" + formatOptions(MenuCatalog.complaintMenu()),
-                    ConversationState.COMPLAINT_MENU,
-                    selectionFor("MAIN_MENU", "COMPLAINT", option.displayLabel()));
-            case "PERSONAL_INFO" -> new Outcome(
-                    "¿Que informacion deseas?\n\n" + formatOptions(MenuCatalog.personalInfoMenu()),
-                    ConversationState.PERSONAL_INFO_MENU,
-                    selectionFor("MAIN_MENU", "PERSONAL_INFO", option.displayLabel()));
-            case "SUPPORT" -> new Outcome(
-                    "¿En que soporte necesitas ayuda?\n\n" + formatOptions(MenuCatalog.supportMenu()),
-                    ConversationState.SUPPORT_MENU,
-                    selectionFor("MAIN_MENU", "SUPPORT", option.displayLabel()));
-            default -> Outcome.textOnly(
-                    "Selecciona una opcion valida.\n\n" + renderMenu(),
-                    ConversationState.MAIN_MENU);
-        };
-    }
-
-    private ConversationSelection selectionFor(String stateKey, String optionKey, String label) {
-        return ConversationSelection.unpersisted(1, stateKey, optionKey, label, "{}");
-    }
-
-    private String renderMenu() {
-        return "Hola! Bienvenido.\n\nSelecciona una opcion:\n\n" + formatOptions(MenuCatalog.mainMenu());
-    }
-
-    private static String formatOptions(List<MenuOption> options) {
-        StringBuilder sb = new StringBuilder();
-        int i = 1;
-        for (MenuOption opt : options) {
-            sb.append(i).append(". ").append(opt.displayLabel()).append("\n");
-            i++;
-        }
-        return sb.toString().trim();
     }
 }

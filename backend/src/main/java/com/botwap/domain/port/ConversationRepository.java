@@ -18,6 +18,17 @@ public interface ConversationRepository {
     Mono<Conversation> findActiveByWaId(String waId);
 
     /**
+     * Última conversación del usuario (activa o cerrada), bloqueando la fila con
+     * {@code SELECT ... ORDER BY created_at DESC LIMIT 1 FOR UPDATE}.
+     *
+     * <p>Permite distinguir un usuario en estado terminal (conversación cerrada,
+     * que permanece en silencio) de un primer contacto.</p>
+     *
+     * <p><strong>Debe invocarse dentro de una transacción R2DBC real.</strong></p>
+     */
+    Mono<Conversation> findLatestByWaIdForUpdate(String waId);
+
+    /**
      * Conversación activa del usuario bloqueando la fila con
      * {@code SELECT ... FOR UPDATE} (serialización de mensajes simultáneos).
      *

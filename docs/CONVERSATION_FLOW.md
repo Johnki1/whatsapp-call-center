@@ -15,8 +15,8 @@
 | `0` / `volver` / `atras` | Retrocede un nivel (estado padre) y descarta selecciones posteriores | Desde `PRODUCT_MENU` → `PURCHASE_MENU` |
 | `menu` / `inicio` / `reiniciar` | Vuelve a `MAIN_MENU` y limpia las selecciones | Desde cualquier estado |
 | `cancelar` / `salir` | Terminal `CANCELLED`: despedida y cierre de la conversación | Desde cualquier estado |
-| `hola` | Sin conversación activa → crea conversación y muestra `MAIN_MENU`. Con conversación en estado terminal → inicia una nueva | Primer mensaje típico |
-| Cualquier otra cosa | Depende del estado (re-prompt si es inválida) | — |
+| `hola` | Sin conversación activa → crea conversación y muestra `MAIN_MENU`. Con conversación en estado terminal (`FINAL`/`CANCELLED`) → inicia una nueva conversación. En cualquier otro estado → re-muestra el menú | Primer mensaje típico |
+| Cualquier otra cosa | Depende del estado (re-prompt si es inválida). **En estado terminal NO responde** (silencio hasta un reinicio explícito) | — |
 
 ## 3. Menú principal (Nivel 1) y categorías
 
@@ -104,22 +104,27 @@ SUPPORT_MENU
 | Nivel 1 | Menú principal | `MAIN_MENU` |
 | Nivel 2 | Servicio / categoría | Estados de categoría (Compra, Recargas, Quejas, Info personal, Soporte) |
 | Nivel 3 | Producto / subservicio | `PRODUCT_MENU(<contexto>)` / submenús de detalle |
-| Nivel 4 | Identificación | `IDENTIFICATION_MENU` (selección del tipo de documento) **+** `DOCUMENT_INPUT` (ingreso del número) — AMBOS pertenecen al nivel 4 |
+| Nivel 4 | Identificación | `NAME_INPUT` (nombre completo) **+** `IDENTIFICATION_MENU` (tipo de documento) **+** `DOCUMENT_INPUT` (número) — los TRES pertenecen al nivel 4 y se recorren en ese orden |
 | Nivel 5 | Confirmación | `CONFIRMATION_MENU` |
 | Después de N5 | Respuesta final | `FINAL` (solo alcanzable DESDE el nivel 5) |
 
-> **El ingreso del tipo de documento y posteriormente el número de documento son DOS pasos del MISMO nivel 4 (Identificación).** La respuesta final (`FINAL`) solo puede emitirse DESPUÉS de completar el nivel 5. Los niveles 1, 2 y 3 NO pueden saltarse: el grafo de estados no tiene transiciones entre niveles no contiguos.
+> **La identificación tiene TRES pasos: Nombre → Tipo de identificación → Número de documento.** La respuesta final (`FINAL`) solo puede emitirse DESPUÉS de completar el nivel 5. Los niveles 1, 2 y 3 NO pueden saltarse: el grafo de estados no tiene transiciones entre niveles no contiguos.
 
 | Estado | Nivel | Entradas válidas | Transición | Datos que necesita |
 |---|---|---|---|---|
 | `MAIN_MENU` | 1 | 1-5, comandos globales | 1→PURCHASE_MENU, 2→RECHARGE_MENU, 3→COMPLAINT_MENU, 4→PERSONAL_INFO_MENU, 5→SUPPORT_MENU | — |
 | Categorías (PURCHASE_MENU, RECHARGE_MENU, COMPLAINT_MENU, PERSONAL_INFO_MENU, SUPPORT_MENU) | 2 | 1-4, comandos globales | → submenú de nivel 3 correspondiente | Selección nivel 2 |
 | `PRODUCT_MENU(<contexto>)` / submenús de detalle | 3 | 1-4, comandos globales | → identificación (o flujo específico, ej. "otro número") | Selección nivel 3 |
+| `NAME_INPUT` | 4 | texto libre (nombre completo) | Válido → `IDENTIFICATION_MENU`; inválido → re-prompt | Nombre completo (texto libre) |
 | `IDENTIFICATION_MENU` | 4 | 1-4 (C.C., Pasaporte, NIT, Cliente nuevo) | → `DOCUMENT_INPUT` | Selección nivel 4 (tipo de documento) |
 | `DOCUMENT_INPUT` | 4 | texto libre (dígitos) | Válido → `CONFIRMATION_MENU`; inválido → re-prompt | Número de documento (texto libre) |
-| `CONFIRMATION_MENU` | 5 | 1 Confirmar / 2 Cambiar / 3 Agente / 4 Cancelar | 1→FINAL, 2→nivel anterior, 3→FINAL(agente), 4→CANCELLED | Selecciones de niveles 1-4 |
-| `FINAL` | terminal | cualquier cosa → si es "hola"/"menu", inicia nueva conversación | — | — |
-| `CANCELLED` | terminal | cualquier cosa → si es "hola"/"menu", inicia nueva conversación | — | — |
+| `CONFIRMATION_MENU` | 5 | 1 Confirmar / 2 Cambiar / 3 Agente / 4 Cancelar | 1→FINAL, 2→nivel 3 de la rama, 3→FINAL(agente), 4→CANCELLED | Selecciones de niveles 1-4 |
+| `FINAL` | terminal | cualquier cosa → si es `hola`/`menu`, inicia nueva conversación; en otro caso **no responde** | — | — |
+| `CANCELLED` | terminal | cualquier cosa → si es `hola`/`menu`, inicia nueva conversación; en otro caso **no responde** | — | — |
+
+### Silencio en estados terminales
+
+Cuando la conversación alcanza `FINAL` o `CANCELLED` pasa a `status = CLOSED` y el bot deja de emitir mensajes para cualquier entrada que no sea un reinicio explícito (`hola` / `menu`): el mensaje entrante se persiste para auditoría/deduplicación, pero **no se crea mensaje saliente ni fila de outbox**. Esto evita el bucle de «menú principal repetido» que disparaban los mensajes tardíos o reintentos tras la despedida.
 
 ### Comportamiento por caso
 
@@ -131,26 +136,29 @@ SUPPORT_MENU
 
 | # | Usuario | Bot | Estado resultante |
 |---|---|---|---|
-| 1 | `hola` | Menú principal (5 opciones) | `MAIN_MENU` |
+| 1 | `hola` | Bienvenida + menú principal (5 opciones) | `MAIN_MENU` |
 | 2 | `1` | Compra de paquetes (4 opciones) | `PURCHASE_MENU` |
 | 3 | `1` | Internet móvil → paquetes 5/10/20 GB, Ilimitado | `PRODUCT_MENU(INTERNET)` |
-| 4 | `2` | "Paquete 10 GB seleccionado" + tipo de identificación (4 opciones) | `IDENTIFICATION_MENU` |
-| 5 | `1` | "Ingresa tu número de cédula" | `DOCUMENT_INPUT` |
-| 6 | `123456789` | Confirmación: resumen completo + 4 acciones | `CONFIRMATION_MENU` |
-| 7 | `1` | **Respuesta final específica** (10 GB, C.C. 123456789, instrucciones) | `FINAL` |
+| 4 | `2` | «10 GB ✅ Para continuar necesitamos identificarte» + petición de nombre | `NAME_INPUT` |
+| 5 | `Juan Pérez` | «¡Gracias, Juan Pérez!» + tipo de identificación (4 opciones) | `IDENTIFICATION_MENU` |
+| 6 | `1` | «Cédula de ciudadanía: escribe tu número de documento» | `DOCUMENT_INPUT` |
+| 7 | `1234567890` | Confirmación: resumen contextual (👤 Juan Pérez (CC ******7890), 📦 Paquete: 10 GB) + 4 acciones | `CONFIRMATION_MENU` |
+| 8 | `1` | **Respuesta final específica** («✅ Tu compra se procesó exitosamente») | `FINAL` |
+| 9 | `gracias` | *(silencio: el estado es terminal)* | `FINAL` |
+| 10 | `hola` | Nueva conversación → bienvenida + menú principal | `MAIN_MENU` |
 
-La respuesta final NO puede ocurrir antes del paso 7 (RF-13): el estado `FINAL` solo es alcanzable desde `CONFIRMATION_MENU`, y ese estado requiere selecciones de los niveles 1-4.
+La respuesta final NO puede ocurrir antes del paso 8 (RF-13): el estado `FINAL` solo es alcanzable desde `CONFIRMATION_MENU`, y ese estado requiere selecciones de los niveles 1-4 (incluido el nombre).
 
 ## 6. Matriz de manejo de entradas
 
-| Entrada | Sin conversación | En MAIN_MENU | En niveles 2-5 |
-|---|---|---|---|
-| `hola` | Crea conversación → menú principal | Re-muestra menú | Re-muestra menú (no reinicia) |
-| Número válido | Se muestra menú invitando a elegir | Transición del menú | Transición / acción del estado |
-| Número inválido | — | Re-prompt | Re-prompt (se mantiene el estado) |
-| Texto inesperado | Muestra menú principal | Re-prompt | Re-prompt con sugerencias |
-| `menu` / `inicio` | Muestra menú | Menú | Reinicia a `MAIN_MENU` + limpia selecciones |
-| `volver` / `atras` / `0` | — | "Ya estás en el menú principal" | Retrocede un nivel |
-| `cancelar` / `salir` | — | Cierra con despedida (`CANCELLED`) | Cierra con despedida (`CANCELLED`) |
-| Mensaje vacío | Se ignora (sin respuesta) | Se ignora | Se ignora |
+| Entrada | Sin conversación | En MAIN_MENU | En niveles 2-5 | En estado terminal |
+|---|---|---|---|---|
+| `hola` | Crea conversación → menú principal | Re-muestra menú | Re-muestra menú (no reinicia) | Nueva conversación → menú principal |
+| Número válido | Se interpreta en `MAIN_MENU` | Transición del menú | Transición / acción del estado | *Sin respuesta* |
+| Número inválido | — | Re-prompt | Re-prompt (se mantiene el estado) | *Sin respuesta* |
+| Texto inesperado | Se interpreta en `MAIN_MENU` | Re-prompt | Re-prompt con sugerencias | *Sin respuesta* |
+| `menu` / `inicio` | Muestra menú | Menú | Reinicia a `MAIN_MENU` | Nueva conversación → menú principal |
+| `volver` / `atras` / `0` | — | «Ya estás en el menú principal» | Retrocede un nivel | *Sin respuesta* |
+| `cancelar` / `salir` | — | Cierra con despedida (`CANCELLED`) | Cierra con despedida (`CANCELLED`) | *Sin respuesta* |
+| Mensaje vacío | Se ignora (sin respuesta) | Se ignora | Se ignora | Se ignora |
 ```

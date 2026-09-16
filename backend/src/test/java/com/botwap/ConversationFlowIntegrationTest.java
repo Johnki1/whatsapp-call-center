@@ -173,10 +173,11 @@ class ConversationFlowIntegrationTest extends BaseIntegrationTest {
         send("573001111111", "w1", "hola");
         send("573001111111", "w2", "1");          // Compra -> PURCHASE_MENU (N2)
         send("573001111111", "w3", "1");          // Internet movil -> PRODUCT_MENU (N3)
-        send("573001111111", "w4", "2");          // 10 GB -> IDENTIFICATION_MENU (N4)
-        send("573001111111", "w5", "1");          // CC -> DOCUMENT_INPUT (N4)
-        send("573001111111", "w6", "1234567890"); // documento -> CONFIRMATION_MENU (N5)
-        send("573001111111", "w7", "1");          // Confirmar -> FINAL
+        send("573001111111", "w4", "2");          // 10 GB -> NAME_INPUT (N4)
+        send("573001111111", "w5", "Juan Perez"); // Nombre -> IDENTIFICATION_MENU (N4)
+        send("573001111111", "w6", "1");          // CC -> DOCUMENT_INPUT (N4)
+        send("573001111111", "w7", "1234567890"); // documento -> CONFIRMATION_MENU (N5)
+        send("573001111111", "w8", "1");          // Confirmar -> FINAL
 
         StepVerifier.create(conversationRow("573001111111"))
                 .assertNext(row -> {
@@ -189,11 +190,12 @@ class ConversationFlowIntegrationTest extends BaseIntegrationTest {
         StepVerifier.create(hasSelection("573001111111", "PURCHASE")).assertNext(b -> assertThat(b).isTrue()).verifyComplete();
         StepVerifier.create(hasSelection("573001111111", "INTERNET_MOBILE")).assertNext(b -> assertThat(b).isTrue()).verifyComplete();
         StepVerifier.create(hasSelection("573001111111", "10GB")).assertNext(b -> assertThat(b).isTrue()).verifyComplete();
+        StepVerifier.create(hasSelection("573001111111", "NAME_SUBMITTED")).assertNext(b -> assertThat(b).isTrue()).verifyComplete();
         StepVerifier.create(hasSelection("573001111111", "CC")).assertNext(b -> assertThat(b).isTrue()).verifyComplete();
         StepVerifier.create(hasSelection("573001111111", "DOCUMENT_SUBMITTED")).assertNext(b -> assertThat(b).isTrue()).verifyComplete();
 
-        // 7 respuestas encoladas PENDING: nada se envía dentro de la transacción.
-        StepVerifier.create(countOutboxPending()).assertNext(n -> assertThat(n).isEqualTo(7L)).verifyComplete();
+        // 8 respuestas encoladas PENDING: nada se envía dentro de la transacción.
+        StepVerifier.create(countOutboxPending()).assertNext(n -> assertThat(n).isEqualTo(8L)).verifyComplete();
         StepVerifier.create(countOutboxSent()).assertNext(n -> assertThat(n).isZero()).verifyComplete();
     }
 
@@ -202,10 +204,11 @@ class ConversationFlowIntegrationTest extends BaseIntegrationTest {
         send("W-A", "r1", "hola");
         send("W-A", "r2", "2");         // Recargas (N2)
         send("W-A", "r3", "1");         // Recargar mi linea -> DETAIL_MENU (N3)
-        send("W-A", "r4", "2");         // 10.000 COP -> IDENTIFICATION (N4)
-        send("W-A", "r5", "3");         // NIT -> DOCUMENT_INPUT (N4)
-        send("W-A", "r6", "900123456"); // NIT valido -> CONFIRMATION (N5)
-        send("W-A", "r7", "4");         // Cancelar -> CANCELLED
+        send("W-A", "r4", "2");         // 10.000 COP -> NAME_INPUT (N4)
+        send("W-A", "r5", "Ana Gomez"); // Nombre -> IDENTIFICATION_MENU (N4)
+        send("W-A", "r6", "3");         // NIT -> DOCUMENT_INPUT (N4)
+        send("W-A", "r7", "900123456"); // NIT valido -> CONFIRMATION (N5)
+        send("W-A", "r8", "4");         // Cancelar -> CANCELLED
 
         StepVerifier.create(conversationRow("W-A"))
                 .assertNext(row -> {
@@ -223,13 +226,17 @@ class ConversationFlowIntegrationTest extends BaseIntegrationTest {
         send("W-B", "q1", "hola");
         send("W-B", "q2", "3");            // Quejas (N2)
         send("W-B", "q3", "1");            // Facturacion -> DETAIL_MENU (N3)
-        send("W-B", "q4", "2");            // Solicitar compensacion -> IDENTIFICATION (N4)
-        send("W-B", "q5", "4");            // Soy cliente nuevo -> DOCUMENT_INPUT (N4)
-        send("W-B", "q6", "continuar");    // (no exige documento) -> CONFIRMATION (N5)
-        send("W-B", "q7", "3");            // Hablar con asesor -> FINAL
+        send("W-B", "q4", "2");            // Solicitar compensacion -> NAME_INPUT (N4)
+        send("W-B", "q5", "Maria Ruiz");   // Nombre -> IDENTIFICATION_MENU (N4)
+        send("W-B", "q6", "4");            // Soy cliente nuevo -> DOCUMENT_INPUT (N4)
+        send("W-B", "q7", "continuar");    // (no exige documento) -> CONFIRMATION (N5)
+        send("W-B", "q8", "3");            // Hablar con asesor -> HUMAN_AGENT (doble mensaje)
 
         StepVerifier.create(conversationRow("W-B"))
-                .assertNext(row -> assertThat(row.get("state")).isEqualTo("FINAL")).verifyComplete();
+                .assertNext(row -> {
+                    assertThat(row.get("state")).isEqualTo("HUMAN_AGENT");
+                    assertThat(row.get("status")).isEqualTo("ACTIVE");
+                }).verifyComplete();
         StepVerifier.create(hasSelection("W-B", "BILLING")).assertNext(b -> assertThat(b).isTrue()).verifyComplete();
         StepVerifier.create(hasSelection("W-B", "COMPENSATION")).assertNext(b -> assertThat(b).isTrue()).verifyComplete();
     }
@@ -239,10 +246,11 @@ class ConversationFlowIntegrationTest extends BaseIntegrationTest {
         send("W-C", "p1", "hola");
         send("W-C", "p2", "4");          // Informacion personal (N2)
         send("W-C", "p3", "1");          // Consultar saldo -> DETAIL_MENU (N3)
-        send("W-C", "p4", "1");          // Ultimos movimientos -> IDENTIFICATION (N4)
-        send("W-C", "p5", "2");          // Pasaporte -> DOCUMENT_INPUT (N4)
-        send("W-C", "p6", "AB12345");    // pasaporte valido -> CONFIRMATION (N5)
-        send("W-C", "p7", "1");          // Confirmar -> FINAL
+        send("W-C", "p4", "1");          // Ultimos movimientos -> NAME_INPUT (N4)
+        send("W-C", "p5", "Luis Torres");// Nombre -> IDENTIFICATION_MENU (N4)
+        send("W-C", "p6", "2");          // Pasaporte -> DOCUMENT_INPUT (N4)
+        send("W-C", "p7", "AB12345");    // pasaporte valido -> CONFIRMATION (N5)
+        send("W-C", "p8", "1");          // Confirmar -> FINAL
 
         StepVerifier.create(conversationRow("W-C"))
                 .assertNext(row -> assertThat(row.get("state")).isEqualTo("FINAL")).verifyComplete();
@@ -255,10 +263,11 @@ class ConversationFlowIntegrationTest extends BaseIntegrationTest {
         send("W-D", "s1", "hola");
         send("W-D", "s2", "5");            // Soporte tecnico (N2)
         send("W-D", "s3", "1");            // Config APN -> DETAIL_MENU (N3)
-        send("W-D", "s4", "4");            // Autodiagnostico -> IDENTIFICATION (N4)
-        send("W-D", "s5", "1");            // CC -> DOCUMENT_INPUT (N4)
-        send("W-D", "s6", "1122334455");   // CC valido -> CONFIRMATION (N5)
-        send("W-D", "s7", "1");            // Confirmar -> FINAL
+        send("W-D", "s4", "4");            // Autodiagnostico -> NAME_INPUT (N4)
+        send("W-D", "s5", "Carla Diaz");   // Nombre -> IDENTIFICATION_MENU (N4)
+        send("W-D", "s6", "1");            // CC -> DOCUMENT_INPUT (N4)
+        send("W-D", "s7", "1122334455");   // CC valido -> CONFIRMATION (N5)
+        send("W-D", "s8", "1");            // Confirmar -> FINAL
 
         StepVerifier.create(conversationRow("W-D"))
                 .assertNext(row -> assertThat(row.get("state")).isEqualTo("FINAL")).verifyComplete();
@@ -296,14 +305,34 @@ class ConversationFlowIntegrationTest extends BaseIntegrationTest {
         send("W-H", "d1", "hola");
         send("W-H", "d2", "1");            // Compra
         send("W-H", "d3", "1");            // Internet movil
-        send("W-H", "d4", "1");            // 5 GB
-        send("W-H", "d5", "1");            // CC
-        send("W-H", "d6", "12A");          // CC invalido (letras + corto)
+        send("W-H", "d4", "1");            // 5 GB -> NAME_INPUT
+        send("W-H", "d5", "Pedro Lima");   // Nombre -> IDENTIFICATION_MENU
+        send("W-H", "d6", "1");            // CC
+        send("W-H", "d7", "12A");          // CC invalido (letras + corto)
         // Sigue en DOCUMENT_INPUT: no avanza, no pierde selecciones previas, no rollbacka.
         StepVerifier.create(conversationRow("W-H"))
                 .assertNext(r -> assertThat(r.get("state")).isEqualTo("DOCUMENT_INPUT")).verifyComplete();
         StepVerifier.create(hasSelection("W-H", "5GB")).assertNext(b -> assertThat(b).isTrue()).verifyComplete();
-        StepVerifier.create(countInbound()).assertNext(n -> assertThat(n).isEqualTo(6L)).verifyComplete();
+        StepVerifier.create(countInbound()).assertNext(n -> assertThat(n).isEqualTo(7L)).verifyComplete();
+    }
+
+    @Test
+    void nombreInvalidoReintentaSinAvanzarDeNivel() {
+        send("W-H2", "n1", "hola");
+        send("W-H2", "n2", "1");           // Compra
+        send("W-H2", "n3", "1");           // Internet movil
+        send("W-H2", "n4", "1");           // 5 GB -> NAME_INPUT
+        send("W-H2", "n5", "12345");       // nombre invalido (numeros)
+        StepVerifier.create(conversationRow("W-H2"))
+                .assertNext(r -> assertThat(r.get("state")).isEqualTo("NAME_INPUT")).verifyComplete();
+        // Ni el tipo de documento ni el numero pueden capturarse sin un nombre valido.
+        send("W-H2", "n6", "1");
+        StepVerifier.create(conversationRow("W-H2"))
+                .assertNext(r -> assertThat(r.get("state")).isEqualTo("NAME_INPUT")).verifyComplete();
+        send("W-H2", "n7", "Rosa Pena");
+        StepVerifier.create(conversationRow("W-H2"))
+                .assertNext(r -> assertThat(r.get("state")).isEqualTo("IDENTIFICATION_MENU")).verifyComplete();
+        StepVerifier.create(hasSelection("W-H2", "NAME_SUBMITTED")).assertNext(b -> assertThat(b).isTrue()).verifyComplete();
     }
 
     @Test
@@ -311,9 +340,10 @@ class ConversationFlowIntegrationTest extends BaseIntegrationTest {
         send("W-I", "c1", "hola");
         send("W-I", "c2", "1");
         send("W-I", "c3", "1");
-        send("W-I", "c4", "1");
-        send("W-I", "c5", "1");            // CC
-        send("W-I", "c6", "123456789");    // CC valido
+        send("W-I", "c4", "1");            // 5 GB -> NAME_INPUT
+        send("W-I", "c5", "Sofia Mora");   // Nombre
+        send("W-I", "c6", "1");            // CC
+        send("W-I", "c7", "123456789");    // CC valido
         StepVerifier.create(conversationRow("W-I"))
                 .assertNext(r -> assertThat(r.get("state")).isEqualTo("CONFIRMATION_MENU")).verifyComplete();
     }
@@ -324,10 +354,11 @@ class ConversationFlowIntegrationTest extends BaseIntegrationTest {
         send("W-J", "pp2", "1");
         send("W-J", "pp3", "1");
         send("W-J", "pp4", "1");
-        send("W-J", "pp5", "2");           // Pasaporte
-        send("W-J", "pp6", "12");          // invalido (corto)
+        send("W-J", "pp5", "Ella Cruz");     // Nombre
+        send("W-J", "pp6", "2");             // Pasaporte
+        send("W-J", "pp7", "12");            // invalido (corto)
         StepVerifier.create(conversationRow("W-J")).assertNext(r -> assertThat(r.get("state")).isEqualTo("DOCUMENT_INPUT")).verifyComplete();
-        send("W-J", "pp7", "AB12CD34");    // valido
+        send("W-J", "pp8", "AB12CD34");      // valido
         StepVerifier.create(conversationRow("W-J")).assertNext(r -> assertThat(r.get("state")).isEqualTo("CONFIRMATION_MENU")).verifyComplete();
     }
 
@@ -337,10 +368,11 @@ class ConversationFlowIntegrationTest extends BaseIntegrationTest {
         send("W-K", "nt2", "1");
         send("W-K", "nt3", "1");
         send("W-K", "nt4", "1");
-        send("W-K", "nt5", "3");           // NIT
-        send("W-K", "nt6", "12A");         // invalido
+        send("W-K", "nt5", "Hugo Nino");    // Nombre
+        send("W-K", "nt6", "3");            // NIT
+        send("W-K", "nt7", "12A");          // invalido
         StepVerifier.create(conversationRow("W-K")).assertNext(r -> assertThat(r.get("state")).isEqualTo("DOCUMENT_INPUT")).verifyComplete();
-        send("W-K", "nt7", "9001122334");  // NIT valido
+        send("W-K", "nt8", "9001122334");   // NIT valido
         StepVerifier.create(conversationRow("W-K")).assertNext(r -> assertThat(r.get("state")).isEqualTo("CONFIRMATION_MENU")).verifyComplete();
     }
 
@@ -349,9 +381,10 @@ class ConversationFlowIntegrationTest extends BaseIntegrationTest {
         send("W-L", "nc1", "hola");
         send("W-L", "nc2", "1");
         send("W-L", "nc3", "1");
-        send("W-L", "nc4", "1");
-        send("W-L", "nc5", "4");           // Soy cliente nuevo
-        send("W-L", "nc6", "no_tengo_doc"); // no exige documento
+        send("W-L", "nc4", "1");             // 5 GB -> NAME_INPUT
+        send("W-L", "nc5", "Nuevo Cliente"); // Nombre
+        send("W-L", "nc6", "4");             // Soy cliente nuevo
+        send("W-L", "nc7", "no_tengo_doc");  // no exige documento
         StepVerifier.create(conversationRow("W-L"))
                 .assertNext(r -> assertThat(r.get("state")).isEqualTo("CONFIRMATION_MENU")).verifyComplete();
     }
@@ -394,9 +427,10 @@ class ConversationFlowIntegrationTest extends BaseIntegrationTest {
         send("W-P", "cd1", "hola");
         send("W-P", "cd2", "1");
         send("W-P", "cd3", "1");
-        send("W-P", "cd4", "1");
-        send("W-P", "cd5", "1");           // CC -> DOCUMENT_INPUT
-        send("W-P", "cd6", "cancelar");    // comando global prevalece sobre el documento
+        send("W-P", "cd4", "1");             // 5 GB -> NAME_INPUT
+        send("W-P", "cd5", "Ivan Rojas");    // Nombre
+        send("W-P", "cd6", "1");             // CC -> DOCUMENT_INPUT
+        send("W-P", "cd7", "cancelar");      // comando global prevalece sobre el documento
         StepVerifier.create(conversationRow("W-P"))
                 .assertNext(r -> assertThat(r.get("state")).isEqualTo("CANCELLED")).verifyComplete();
     }
@@ -474,10 +508,11 @@ class ConversationFlowIntegrationTest extends BaseIntegrationTest {
         // No se crea seleccion de nivel 3 porque "1234567890" es opcion invalida en PRODUCT_MENU.
         StepVerifier.create(topLevel("W-S")).assertNext(lv -> assertThat(lv).isEqualTo(2)).verifyComplete();
 
-        // Para llegar a CONFIRMATION_MENU hay que pasar por identificacion y documento:
-        send("W-S", "j5", "1");            // 5 GB en PRODUCT_MENU -> IDENTIFICATION_MENU (N3)
-        send("W-S", "j6", "1");            // CC en IDENTIFICATION_MENU -> DOCUMENT_INPUT (N4)
-        send("W-S", "j7", "1234567890");   // documento valido -> CONFIRMATION_MENU (N5)
+        // Para llegar a CONFIRMATION_MENU hay que pasar por nombre, tipo y numero de documento:
+        send("W-S", "j5", "1");            // 5 GB en PRODUCT_MENU -> NAME_INPUT (N4)
+        send("W-S", "j6", "Elsa Vidal");   // nombre -> IDENTIFICATION_MENU (N4)
+        send("W-S", "j7", "1");            // CC en IDENTIFICATION_MENU -> DOCUMENT_INPUT (N4)
+        send("W-S", "j8", "1234567890");   // documento valido -> CONFIRMATION_MENU (N5)
         StepVerifier.create(conversationRow("W-S"))
                 .assertNext(r -> assertThat(r.get("state")).isEqualTo("CONFIRMATION_MENU")).verifyComplete();
     }
@@ -487,12 +522,13 @@ class ConversationFlowIntegrationTest extends BaseIntegrationTest {
         send("W-T", "f1", "hola");
         send("W-T", "f2", "1");
         send("W-T", "f3", "1");
-        send("W-T", "f4", "1");
-        send("W-T", "f5", "1");            // CC
-        send("W-T", "f6", "1234567890");   // -> CONFIRMATION (N5)
+        send("W-T", "f4", "1");              // 5 GB -> NAME_INPUT
+        send("W-T", "f5", "Team Dos");       // Nombre
+        send("W-T", "f6", "1");              // CC
+        send("W-T", "f7", "1234567890");     // -> CONFIRMATION (N5)
         StepVerifier.create(conversationRow("W-T"))
                 .assertNext(r -> assertThat(r.get("state")).isEqualTo("CONFIRMATION_MENU")).verifyComplete();
-        send("W-T", "f7", "4");            // Cancelar en N5 (no FINAL)
+        send("W-T", "f8", "4");              // Cancelar en N5 (no FINAL)
         StepVerifier.create(conversationRow("W-T"))
                 .assertNext(r -> assertThat(r.get("state")).isEqualTo("CANCELLED")).verifyComplete();
     }
@@ -502,10 +538,11 @@ class ConversationFlowIntegrationTest extends BaseIntegrationTest {
         send("W-U", "cp1", "hola");
         send("W-U", "cp2", "1");           // Compra
         send("W-U", "cp3", "1");           // Internet movil
-        send("W-U", "cp4", "1");           // 5 GB
-        send("W-U", "cp5", "1");           // CC
-        send("W-U", "cp6", "1234567890");  // -> CONFIRMATION
-        send("W-U", "cp7", "2");           // Cambiar paquete -> PRODUCT_MENU (N3)
+        send("W-U", "cp4", "1");           // 5 GB -> NAME_INPUT
+        send("W-U", "cp5", "Omar Gil");    // Nombre
+        send("W-U", "cp6", "1");           // CC
+        send("W-U", "cp7", "1234567890");  // -> CONFIRMATION
+        send("W-U", "cp8", "2");           // Cambiar paquete -> PRODUCT_MENU (N3)
         StepVerifier.create(conversationRow("W-U"))
                 .assertNext(r -> assertThat(r.get("state")).isEqualTo("PRODUCT_MENU")).verifyComplete();
         StepVerifier.create(hasSelection("W-U", "INTERNET_MOBILE")).assertNext(b -> assertThat(b).isTrue()).verifyComplete();
@@ -513,16 +550,130 @@ class ConversationFlowIntegrationTest extends BaseIntegrationTest {
     }
 
     @Test
-    void asesorFinalizaDeFormaControlada() {
+    void asesorGeneraDobleMensajeYQuedaActivoConDespertador() {
         send("W-V", "ag1", "hola");
         send("W-V", "ag2", "1");
         send("W-V", "ag3", "1");
-        send("W-V", "ag4", "1");
-        send("W-V", "ag5", "1");           // CC
-        send("W-V", "ag6", "1234567890");  // -> CONFIRMATION
-        send("W-V", "ag7", "3");           // Hablar con asesor -> FINAL
+        send("W-V", "ag4", "1");           // 5 GB -> NAME_INPUT
+        send("W-V", "ag5", "Vera Pardo");  // Nombre
+        send("W-V", "ag6", "1");           // CC
+        send("W-V", "ag7", "1234567890");  // -> CONFIRMATION
+        send("W-V", "ag8", "3");           // Hablar con asesor -> HUMAN_AGENT (doble mensaje)
+        // HUMAN_AGENT permanece ACTIVE (despertador INICIO/MENU), no CLOSED.
         StepVerifier.create(conversationRow("W-V"))
-                .assertNext(r -> assertThat(r.get("state")).isEqualTo("FINAL")).verifyComplete();
+                .assertNext(r -> {
+                    assertThat(r.get("state")).isEqualTo("HUMAN_AGENT");
+                    assertThat(r.get("status")).isEqualTo("ACTIVE");
+                }).verifyComplete();
+        // 7 respuestas previas + cliente + admin = 9 outbox.
+        StepVerifier.create(countOutbox()).assertNext(n -> assertThat(n).isEqualTo(9L)).verifyComplete();
+        // Silencio permanente: mensaje suelto no genera outbox nuevo.
+        send("W-V", "ag9", "gracias, sigo esperando");
+        StepVerifier.create(countOutbox()).assertNext(n -> assertThat(n).isEqualTo(9L)).verifyComplete();
+        // Despertador INICIO: vuelve a MAIN_MENU con menu interactivo.
+        send("W-V", "ag10", "INICIO");
+        StepVerifier.create(conversationRow("W-V"))
+                .assertNext(r -> {
+                    assertThat(r.get("state")).isEqualTo("MAIN_MENU");
+                    assertThat(r.get("status")).isEqualTo("ACTIVE");
+                }).verifyComplete();
+        StepVerifier.create(countOutbox()).assertNext(n -> assertThat(n).isEqualTo(10L)).verifyComplete();
+    }
+
+    @Test
+    void profileNameSeGuardaYPersonalizaBienvenida() {
+        String payload = "{\"object\":\"waba\",\"entry\":[{\"id\":\"WABA\",\"changes\":[{"
+                + "\"field\":\"messages\",\"value\":{\"contacts\":[{\"profile\":{\"name\":\"Jhonki\"}}],\"messages\":[{"
+                + "\"from\":\"573009998887\",\"id\":\"wamid.profile-1\",\"type\":\"text\","
+                + "\"text\":{\"body\":\"hola\"}}]}}]}]}";
+        client.post()
+                .uri("/webhook/whatsapp")
+                .header("X-Hub-Signature-256", sign(SECRET, payload))
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(payload)
+                .exchange()
+                .expectStatus().isOk();
+        StepVerifier.create(databaseClient.sql("SELECT profile_name FROM conversation WHERE wa_id = '573009998887'")
+                        .map(row -> row.get("profile_name", String.class)).one())
+                .assertNext(name -> assertThat(name).isEqualTo("Jhonki")).verifyComplete();
+        StepVerifier.create(databaseClient.sql("SELECT payload FROM outbox_message WHERE wa_id = '573009998887'")
+                        .map(row -> row.get("payload", String.class)).one())
+                .assertNext(pl -> assertThat(pl).contains("Jhonki")).verifyComplete();
+    }
+
+    // ----------------------------------------------------------------
+    // Estado terminal: la conversación queda cerrada y el bot en silencio
+    // (regresión del bucle de "mensajes fantasma" / menú principal repetido)
+    // ----------------------------------------------------------------
+
+    @Test
+    void estadoFinalNoRespondeMensajesSueltosNiReabreLaConversacion() {
+        long outboxBefore = finalizarCompra("W-W", "tw");
+
+        // Mensajes tardíos que no son un reinicio explícito: NO deben generar
+        // ninguna respuesta automática (fin del bucle de menús).
+        send("W-W", "tw9", "gracias");
+        send("W-W", "tw10", "1");
+        send("W-W", "tw11", "menu opciones");
+
+        StepVerifier.create(countOutbox())
+                .assertNext(n -> assertThat(n).isEqualTo(outboxBefore)).verifyComplete();
+        StepVerifier.create(conversationRow("W-W")).assertNext(r -> {
+            assertThat(r.get("state")).isEqualTo("FINAL");
+            assertThat(r.get("status")).isEqualTo("CLOSED");
+        }).verifyComplete();
+        StepVerifier.create(count("SELECT COUNT(*) AS cnt FROM conversation WHERE wa_id = 'W-W'"))
+                .assertNext(n -> assertThat(n).isEqualTo(1L)).verifyComplete();
+        // Los entrantes sí quedan registrados (auditoría + deduplicación): 8 del flujo + 3 sueltos.
+        StepVerifier.create(countInbound()).assertNext(n -> assertThat(n).isEqualTo(11L)).verifyComplete();
+    }
+
+    @Test
+    void saludoTrasFinalizarAbreNuevaConversacionActiva() {
+        finalizarCompra("W-X", "rx");
+
+        send("W-X", "rx9", "hola");
+
+        StepVerifier.create(count("SELECT COUNT(*) AS cnt FROM conversation WHERE wa_id = 'W-X'"))
+                .assertNext(n -> assertThat(n).isEqualTo(2L)).verifyComplete();
+        StepVerifier.create(databaseClient.sql(
+                                "SELECT state FROM conversation WHERE wa_id = 'W-X' AND status = 'ACTIVE'")
+                        .map(row -> row.get("state", String.class))
+                        .one())
+                .assertNext(state -> assertThat(state).isEqualTo("MAIN_MENU")).verifyComplete();
+        // 8 respuestas del flujo anterior + la bienvenida de la nueva conversación.
+        StepVerifier.create(countOutbox()).assertNext(n -> assertThat(n).isEqualTo(9L)).verifyComplete();
+    }
+
+    @Test
+    void estadoCanceladoTambienQuedaEnSilencio() {
+        send("W-Y", "cy1", "hola");
+        send("W-Y", "cy2", "cancelar");
+        send("W-Y", "cy3", "1");     // mensaje suelto posterior: sin respuesta
+
+        StepVerifier.create(conversationRow("W-Y")).assertNext(r -> {
+            assertThat(r.get("state")).isEqualTo("CANCELLED");
+            assertThat(r.get("status")).isEqualTo("CLOSED");
+        }).verifyComplete();
+        StepVerifier.create(countOutbox()).assertNext(n -> assertThat(n).isEqualTo(2L)).verifyComplete();
+    }
+
+    /** Ejecuta un flujo de compra completo hasta FINAL y devuelve el total de outbox. */
+    private long finalizarCompra(String waId, String prefix) {
+        send(waId, prefix + "1", "hola");
+        send(waId, prefix + "2", "1");           // Compra -> PURCHASE_MENU
+        send(waId, prefix + "3", "1");           // Internet móvil -> PRODUCT_MENU
+        send(waId, prefix + "4", "1");           // 5 GB -> NAME_INPUT
+        send(waId, prefix + "5", "Test User");   // Nombre -> IDENTIFICATION_MENU
+        send(waId, prefix + "6", "1");           // CC -> DOCUMENT_INPUT
+        send(waId, prefix + "7", "1234567890");  // Documento -> CONFIRMATION_MENU
+        send(waId, prefix + "8", "1");           // Confirmar -> FINAL
+
+        StepVerifier.create(conversationRow(waId)).assertNext(r -> {
+            assertThat(r.get("state")).isEqualTo("FINAL");
+            assertThat(r.get("status")).isEqualTo("CLOSED");
+        }).verifyComplete();
+        return countOutbox().block();
     }
 
     @Test

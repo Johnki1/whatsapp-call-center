@@ -33,6 +33,9 @@ public enum ConversationState {
     /** Nivel 3 — Submenú de detalle del caso (quejas/soporte/información). */
     DETAIL_MENU(3),
 
+    /** Nivel 4 — Identificación: ingreso del nombre completo del usuario. */
+    NAME_INPUT(4),
+
     /** Nivel 4 — Identificación: selección del tipo de documento. */
     IDENTIFICATION_MENU(4),
 
@@ -46,7 +49,17 @@ public enum ConversationState {
     FINAL(-1),
 
     /** Estado terminal — Conversación cancelada. */
-    CANCELLED(-1);
+    CANCELLED(-1),
+
+    /**
+     * Estado terminal — Handoff a un asesor humano.
+     *
+     * <p>El bot anuncia la transferencia y luego permanece en silencio
+     * ({@code EngineResult.silent()} permanente): la conversación la retoma una
+     * persona por el mismo canal de WhatsApp. Un reinicio explícito
+     * ({@code hola}/{@code menu}) abre una conversación nueva.</p>
+     */
+    HUMAN_AGENT(-1);
 
     private final int level;
 
@@ -57,5 +70,13 @@ public enum ConversationState {
     /** Nivel jerárquico del estado (de la definición oficial de los 5 niveles). */
     public int level() {
         return level;
+    }
+
+    /**
+     * Indica si el estado es terminal: la conversación queda cerrada y el bot
+     * debe permanecer en silencio hasta que el usuario reinicie explícitamente.
+     */
+    public boolean isTerminal() {
+        return level < 0;
     }
 }

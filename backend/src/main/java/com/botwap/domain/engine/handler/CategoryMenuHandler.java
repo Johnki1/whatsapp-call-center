@@ -1,39 +1,33 @@
 package com.botwap.domain.engine.handler;
 
+import com.botwap.domain.engine.BotCopy;
 import com.botwap.domain.engine.InputNormalizer;
+import com.botwap.domain.engine.ServiceBranch;
 import com.botwap.domain.engine.StateHandler;
+import com.botwap.domain.menu.InteractiveOption;
+import com.botwap.domain.menu.MenuCatalog;
+import com.botwap.domain.menu.MenuOption;
 import com.botwap.domain.model.ConversationSelection;
 import com.botwap.domain.model.ConversationState;
-import com.botwap.domain.menu.MenuOption;
-import com.botwap.domain.menu.MenuCatalog;
 
 import java.util.List;
-import java.util.function.Function;
+import java.util.Optional;
 
 /**
- * Handler generico para los Menus de categoria (Nivel 2).
+ * Handler genérico de los menús de categoría (Nivel 2) de las cinco ramas.
  *
- * <p>Parametrizado por:
- * - stateKey origen (MAIN_MENU) del que se vino;
- * - opciones del menu N2;
- * - funcion que mapea la opcion elegida al estado N3 destino.</p>
+ * <p>Presenta el submenú correspondiente como mensaje interactivo nativo (lista
+ * para 4 opciones) con ids estables; también acepta la selección por número.
+ * El comportamiento es idéntico para todas las ramas: registrar la selección de
+ * Nivel 2 y avanzar al Nivel 3. La única diferencia entre ramas —el destino de
+ * Nivel 3 y los textos— se deriva de {@link ServiceBranch}.</p>
  */
 public final class CategoryMenuHandler implements StateHandler {
 
-    private final String originStateKey;
-    private final String stateKey;
-    private final List<MenuOption> options;
-    private final String prompt;
-    private final Function<MenuOption, ConversationState> nextStateMapper;
+    private final ServiceBranch branch;
 
-    public CategoryMenuHandler(String originStateKey, String stateKey,
-                               List<MenuOption> options, String prompt,
-                               Function<MenuOption, ConversationState> nextStateMapper) {
-        this.originStateKey = originStateKey;
-        this.stateKey = stateKey;
-        this.options = options;
-        this.prompt = prompt;
-        this.nextStateMapper = nextStateMapper;
+    public CategoryMenuHandler(ServiceBranch branch) {
+        this.branch = branch;
     }
 
     @Override
@@ -44,74 +38,42 @@ public final class CategoryMenuHandler implements StateHandler {
             return handleGlobal(normalized);
         }
 
-        try {
-            int option = Integer.parseInt(normalized);
-            if (option < 1 || option > options.size()) {
-                return Outcome.textOnly(
-                        "Opcion no valida. Selecciona entre 1 y " + options.size() + ".\n\n"
-                                + prompt + "\n\n" + formatOptions(options),
-                        stateToState());
-            }
-            MenuOption selected = options.get(option - 1);
-            ConversationState next = nextStateMapper.apply(selected);
-            return new Outcome(
-                    prompt + "\n\n" + formatOptions(nextLevelOptions(next)),
-                    next,
-                    ConversationSelection.unpersisted(2, stateKey, selected.optionKey(), selected.displayLabel(), "{}"));
-        } catch (NumberFormatException e) {
-            return Outcome.textOnly(
-                    "Entrada no reconocida. Selecciona entre 1 y " + options.size() + ".\n\n"
-                            + prompt + "\n\n" + formatOptions(options),
-                    stateToState());
+        List<MenuOption> options = MenuCatalog.optionsFor(branch.stateKey());
+        Optional<MenuOption> selected = InputNormalizer.matchOption(options, normalized);
+        if (selected.isEmpty()) {
+            return invalidInput(options);
         }
+
+        MenuOption chosen = selected.get();
+        return Outcome.menu(
+                BotCopy.detailPrompt(branch, chosen.label()),
+                nextState(),
+                ConversationSelection.unpersisted(2, branch.stateKey(), chosen.optionKey(),
+                        chosen.label(), "{}"),
+                InteractiveOption.listOf(MenuCatalog.detailOptionsFor(branch.stateKey())));
+    }
+
+    /** Rama de compra → catálogo de paquetes; resto → submenú de detalle. */
+    private ConversationState nextState() {
+        return branch == ServiceBranch.PURCHASE
+                ? ConversationState.PRODUCT_MENU
+                : ConversationState.DETAIL_MENU;
+    }
+
+    private Outcome invalidInput(List<MenuOption> options) {
+        return Outcome.menu(BotCopy.notUnderstood(), currentState(), null,
+                InteractiveOption.listOf(options));
+    }
+
+    private ConversationState currentState() {
+        return ConversationState.valueOf(branch.stateKey());
     }
 
     private Outcome handleGlobal(String cmd) {
         return switch (cmd) {
-            case "menu" -> Outcome.textOnly(
-                    "Hola! Bienvenido.\n\nSelecciona una opcion:\n\n" + formatOptions(MenuCatalog.mainMenu()),
-                    ConversationState.MAIN_MENU);
-            case "cancelar" -> Outcome.textOnly(
-                    "Tu conversacion ha sido cancelada. Escribe 'hola' para comenzar de nuevo.",
-                    ConversationState.CANCELLED);
-            case "volver" -> Outcome.textOnly(
-                    "Regresando al menu principal.\n\nSelecciona una opcion:\n\n"
-                            + formatOptions(MenuCatalog.mainMenu()),
-                    ConversationState.MAIN_MENU);
-            default -> Outcome.textOnly(
-                    "Selecciona una opcion valida.\n\n" + prompt + "\n\n" + formatOptions(options),
-                    stateToState());
+            case "cancelar" -> Outcome.textOnly(BotCopy.cancelled(), ConversationState.CANCELLED);
+            default -> Outcome.menu(BotCopy.backToMain(), ConversationState.MAIN_MENU, null,
+                    InteractiveOption.listOf(MenuCatalog.mainMenu()));
         };
-    }
-
-    private ConversationState stateToState() {
-        return ConversationState.valueOf(stateKey);
-    }
-
-    private List<MenuOption> nextLevelOptions(ConversationState next) {
-        return switch (next) {
-            case ConversationState.PRODUCT_MENU -> MenuCatalog.productMenu();
-            case ConversationState.DETAIL_MENU -> {
-                // Determina qué submenú de detalle mostrar basado en el stateKey actual
-                yield switch (stateKey) {
-                    case "RECHARGE_MENU" -> MenuCatalog.rechargeDetailMenu();
-                    case "COMPLAINT_MENU" -> MenuCatalog.complaintDetailMenu();
-                    case "PERSONAL_INFO_MENU" -> MenuCatalog.personalInfoDetailMenu();
-                    case "SUPPORT_MENU" -> MenuCatalog.supportDetailMenu();
-                    default -> MenuCatalog.productMenu();
-                };
-            }
-            default -> MenuCatalog.productMenu();
-        };
-    }
-
-    private static String formatOptions(List<MenuOption> options) {
-        StringBuilder sb = new StringBuilder();
-        int i = 1;
-        for (MenuOption opt : options) {
-            sb.append(i).append(". ").append(opt.displayLabel()).append("\n");
-            i++;
-        }
-        return sb.toString().trim();
     }
 }

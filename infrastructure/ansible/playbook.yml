@@ -53,6 +53,7 @@
       whatsapp-phone-number-id: WHATSAPP_PHONE_NUMBER_ID
       whatsapp-waba-id: WHATSAPP_WABA_ID
       whatsapp-app-id: WHATSAPP_APP_ID
+      gemini-api-key: GEMINI_API_KEY
 
   handlers:
     - name: Reiniciar Nginx

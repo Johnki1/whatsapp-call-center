@@ -69,7 +69,7 @@ class PersistenceIntegrationTest extends BaseIntegrationTest {
 
     @Test
     void savesAndFindsActiveConversation() {
-        Conversation saved = conversationRepository.insert(Conversation.newActive(WA_A)).block();
+        Conversation saved = conversationRepository.insert(Conversation.newActive(WA_A, null)).block();
 
         assertThat(saved).isNotNull();
         assertThat(saved.version()).isZero();
@@ -85,17 +85,17 @@ class PersistenceIntegrationTest extends BaseIntegrationTest {
 
     @Test
     void rejectsSecondActiveConversationForSameWaId() {
-        conversationRepository.insert(Conversation.newActive(WA_A)).block();
+        conversationRepository.insert(Conversation.newActive(WA_A, null)).block();
 
         // El índice único parcial (wa_id) WHERE status='ACTIVE' impide dos activas.
-        StepVerifier.create(conversationRepository.insert(Conversation.newActive(WA_A)))
+        StepVerifier.create(conversationRepository.insert(Conversation.newActive(WA_A, null)))
                 .expectErrorMatches(e -> e instanceof DomainException)
                 .verify();
     }
 
     @Test
     void optimisticLockDetectsConcurrentUpdate() {
-        conversationRepository.insert(Conversation.newActive(WA_A)).block();
+        conversationRepository.insert(Conversation.newActive(WA_A, null)).block();
         Conversation reloaded = conversationRepository.findActiveByWaId(WA_A).block();
 
         // Actualización correcta (versión esperada = 0).
@@ -117,7 +117,7 @@ class PersistenceIntegrationTest extends BaseIntegrationTest {
 
     @Test
     void selectionIsUpsertedByLevel() {
-        Conversation conversation = conversationRepository.insert(Conversation.newActive(WA_A)).block();
+        Conversation conversation = conversationRepository.insert(Conversation.newActive(WA_A, null)).block();
 
         selectionRepository.save(ConversationSelection.of(
                         conversation.id(), 1, "MAIN_MENU", "PURCHASE", "Compra de paquetes"))
@@ -151,7 +151,7 @@ class PersistenceIntegrationTest extends BaseIntegrationTest {
 
     @Test
     void markReceivedAsProcessedIsIdempotent() {
-        Conversation conversation = conversationRepository.insert(Conversation.newActive(WA_A)).block();
+        Conversation conversation = conversationRepository.insert(Conversation.newActive(WA_A, null)).block();
         Message inbound = messageRepository
                 .save(Message.inbound(conversation.id(), "wamid-abc", "hola"))
                 .block();
@@ -170,7 +170,7 @@ class PersistenceIntegrationTest extends BaseIntegrationTest {
 
     @Test
     void duplicateWamidIsRejectedAndDetected() {
-        Conversation conversation = conversationRepository.insert(Conversation.newActive(WA_A)).block();
+        Conversation conversation = conversationRepository.insert(Conversation.newActive(WA_A, null)).block();
 
         messageRepository.save(Message.inbound(conversation.id(), "wamid-unico", "hola")).block();
 
@@ -191,7 +191,7 @@ class PersistenceIntegrationTest extends BaseIntegrationTest {
 
     @Test
     void outboxClaimsPendingOnceAndRecoversExpiredLease() {
-        Conversation conversation = conversationRepository.insert(Conversation.newActive(WA_A)).block();
+        Conversation conversation = conversationRepository.insert(Conversation.newActive(WA_A, null)).block();
         Message outbound = messageRepository
                 .save(Message.outboundPending(conversation.id(), "respuesta"))
                 .block();
@@ -240,7 +240,7 @@ class PersistenceIntegrationTest extends BaseIntegrationTest {
     @Test
     void forUpdateRunsInsideTransaction() {
         transactionalOperator.execute(tx ->
-                        conversationRepository.insert(Conversation.newActive(WA_A))
+                        conversationRepository.insert(Conversation.newActive(WA_A, null))
                                 .then(conversationRepository.findActiveByWaIdForUpdate(WA_A))
                                 .flatMap(locked -> conversationRepository
                                         .update(locked.withState(ConversationState.PURCHASE_MENU))))

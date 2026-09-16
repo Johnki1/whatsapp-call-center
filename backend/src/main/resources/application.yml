@@ -58,6 +58,13 @@ app:
     lease-duration-seconds: 60
     max-attempts: 3
     backoff-base-seconds: 1
+  # ===== Gemini AI (Fase V2): coste $0 cuando deshabilitado o sin key =====
+  gemini:
+    enabled: ${APP_GEMINI_ENABLED:true}
+    api-key: ${GEMINI_API_KEY:}
+    model: ${GEMINI_MODEL:gemini-3.5-flash-lite}
+    base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com}
+    timeout-ms: ${GEMINI_TIMEOUT_MS:8000}
 
 # ===== Logging base =====
 logging:

@@ -16,6 +16,7 @@ public record Conversation(
         String waId,
         ConversationState state,
         ConversationStatus status,
+        String profileName,
         long version,
         Instant createdAt,
         Instant updatedAt,
@@ -31,23 +32,57 @@ public record Conversation(
     }
 
     /** Crea una conversación nueva y activa en el menú principal. */
-    public static Conversation newActive(String waId) {
+    public static Conversation newActive(String waId, String profileName) {
         Instant now = Instant.now();
         return new Conversation(UUID.randomUUID(), waId, ConversationState.MAIN_MENU,
-                ConversationStatus.ACTIVE, 0L, now, now, null);
+                ConversationStatus.ACTIVE, normalizeProfileName(profileName), 0L, now, now, null);
     }
 
+    /**
+     * Normaliza el nombre de perfil para persistirlo: recorta extremos, colapsa
+     * espacios y limita a {@value #MAX_PROFILE_NAME_LENGTH} caracteres (columna
+     * {@code profile_name VARCHAR(100)}).
+     */
+    public static String normalizeProfileName(String profileName) {
+        if (profileName == null) {
+            return null;
+        }
+        String clean = profileName.trim().replaceAll("\\s+", " ");
+        return clean.isEmpty() ? null
+                : clean.substring(0, Math.min(clean.length(), MAX_PROFILE_NAME_LENGTH));
+    }
+
+    /** Longitud máxima del nombre de perfil almacenado. */
+    public static final int MAX_PROFILE_NAME_LENGTH = 100;
+
     public Conversation withState(ConversationState newState) {
-        return new Conversation(id, waId, newState, status, version, createdAt, Instant.now(), closedAt);
+        return new Conversation(id, waId, newState, status, profileName, version, createdAt,
+                Instant.now(), closedAt);
+    }
+
+    public Conversation withProfileName(String newProfileName) {
+        return new Conversation(id, waId, state, status, normalizeProfileName(newProfileName),
+                version, createdAt, Instant.now(), closedAt);
     }
 
     public Conversation withStatus(ConversationStatus newStatus) {
         Instant now = Instant.now();
-        return new Conversation(id, waId, state, newStatus, version, createdAt, now,
+        return new Conversation(id, waId, state, newStatus, profileName, version, createdAt, now,
                 newStatus == ConversationStatus.CLOSED ? now : closedAt);
     }
 
     public Conversation withVersion(long newVersion) {
-        return new Conversation(id, waId, state, status, newVersion, createdAt, updatedAt, closedAt);
+        return new Conversation(id, waId, state, status, profileName, newVersion, createdAt,
+                updatedAt, closedAt);
+    }
+
+    /** Indica si la conversación está cerrada (no admite nuevas interacciones). */
+    public boolean isClosed() {
+        return status == ConversationStatus.CLOSED;
+    }
+
+    /** Indica si la conversación está en un estado terminal (FINAL o CANCELLED). */
+    public boolean isTerminal() {
+        return state.isTerminal();
     }
 }

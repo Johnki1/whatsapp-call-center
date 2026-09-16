@@ -178,6 +178,31 @@ class OutboxPollerIntegrationTest extends BaseIntegrationTest {
     }
 
     @Test
+    void leaseRecoveryNoReenviaMasAllaDeMaxAttempts() {
+        OutboxMessage outbox = createPendingOutbox();
+        mockWhatsAppClient.configureAlwaysSucceed();
+
+        // Simula un mensaje reclamado muchas veces sin confirmar (lease vencido):
+        // ya superó maxAttempts, por lo que NO debe reenviarse nunca más.
+        databaseClient.sql("""
+                        UPDATE outbox_message
+                        SET status = 'SENDING',
+                            attempts = :attempts,
+                            lease_expires_at = now() - interval '1 minute'
+                        WHERE id = :id
+                        """)
+                .bind("attempts", outboxProperties.maxAttempts())
+                .bind("id", outbox.id())
+                .then().block();
+
+        StepVerifier.create(outboxPoller.processPending()).verifyComplete();
+
+        StepVerifier.create(findOutboxStatus(outbox.id()))
+                .assertNext(status -> assertThat(status).isEqualTo(OutboxStatus.FAILED)).verifyComplete();
+        assertThat(mockWhatsAppClient.getCallCount()).isZero();
+    }
+
+    @Test
     void multiplePendingMessagesAllSent() {
         for (int i = 0; i < 5; i++) {
             createPendingOutbox(WA_ID + "-" + i);

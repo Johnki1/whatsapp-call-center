@@ -20,50 +20,76 @@ public final class DocumentValidator {
     }
 
     /**
-     * Resultado de la validacion del documento.
-     * @param valid true si el documento pasa la validacion.
-     * @param message mensaje explicativo (para mostrar al usuario si no es valido).
+     * Valida el documento contra el tipo indicado.
+     *
+     * @param type     tipo de documento elegido por el usuario.
+     * @param document numero de documento en texto libre.
+     * @return resultado con el mensaje a mostrar cuando no es válido.
      */
-    public record ValidateResult(boolean valid, String message) {
-    }
-
-    public static ValidateResult validate(DocumentType type, String document) {
+    public static ValidationResult validate(DocumentType type, String document) {
         if (type == null) {
-            return new ValidateResult(false, "Tipo de identificacion invalido.");
+            return ValidationResult.invalid("Tipo de identificacion invalido.");
         }
         if (document == null || document.isBlank()) {
-            return new ValidateResult(false, "El numero de documento no puede estar vacio.");
+            return ValidationResult.invalid("El numero de documento no puede estar vacio.");
         }
         String trimmed = document.trim();
         return switch (type) {
             case CC -> validateNumeric(trimmed, 5, 10, "Cedula de ciudadania");
             case NIT -> validateNumeric(trimmed, 8, 12, "NIT");
             case PASSPORT -> validateAlphanumeric(trimmed, 5, 10, "Pasaporte");
-            case NEW_CLIENT -> new ValidateResult(true, "");
+            case NEW_CLIENT -> ValidationResult.ok();
         };
     }
 
-    private static ValidateResult validateNumeric(String value, int minLen, int maxLen, String label) {
-        if (!value.matches("\\d+")) {
-            return new ValidateResult(false, label + ": ingresa solo numeros.");
+    /** Tipo de documento a partir del {@code optionKey} del menu de identificacion. */
+    public static DocumentType fromOptionKey(String optionKey) {
+        if (optionKey == null) {
+            return null;
         }
-        int len = value.length();
-        if (len < minLen || len > maxLen) {
-            return new ValidateResult(false,
-                    label + ": longitud invalida (debe tener entre " + minLen + " y " + maxLen + " digitos).");
+        for (DocumentType type : DocumentType.values()) {
+            if (type.name().equals(optionKey)) {
+                return type;
+            }
         }
-        return new ValidateResult(true, "");
+        return null;
     }
 
-    private static ValidateResult validateAlphanumeric(String value, int minLen, int maxLen, String label) {
-        if (!value.matches("[A-Za-z0-9]+")) {
-            return new ValidateResult(false, label + ": ingresa solo letras y/o numeros.");
+    /** Sigla/etiqueta corta del tipo de documento (para resumenes). */
+    public static String shortLabel(String optionKey) {
+        DocumentType type = fromOptionKey(optionKey);
+        if (type == null) {
+            return optionKey == null ? "-" : optionKey;
+        }
+        return switch (type) {
+            case CC -> "CC";
+            case NIT -> "NIT";
+            case PASSPORT -> "Pasaporte";
+            case NEW_CLIENT -> "Cliente nuevo";
+        };
+    }
+
+    private static ValidationResult validateNumeric(String value, int minLen, int maxLen, String label) {
+        if (!value.matches("\\d+")) {
+            return ValidationResult.invalid(label + ": ingresa solo numeros.");
         }
         int len = value.length();
         if (len < minLen || len > maxLen) {
-            return new ValidateResult(false,
+            return ValidationResult.invalid(
+                    label + ": longitud invalida (debe tener entre " + minLen + " y " + maxLen + " digitos).");
+        }
+        return ValidationResult.ok();
+    }
+
+    private static ValidationResult validateAlphanumeric(String value, int minLen, int maxLen, String label) {
+        if (!value.matches("[A-Za-z0-9]+")) {
+            return ValidationResult.invalid(label + ": ingresa solo letras y/o numeros.");
+        }
+        int len = value.length();
+        if (len < minLen || len > maxLen) {
+            return ValidationResult.invalid(
                     label + ": longitud invalida (debe tener entre " + minLen + " y " + maxLen + " caracteres).");
         }
-        return new ValidateResult(true, "");
+        return ValidationResult.ok();
     }
 }

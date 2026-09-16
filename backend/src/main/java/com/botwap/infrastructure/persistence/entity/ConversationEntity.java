@@ -19,6 +19,8 @@ public class ConversationEntity {
     private String state;
     @Column("status")
     private String status;
+    @Column("profile_name")
+    private String profileName;
     @Column("version")
     private long version;
     @Column("created_at")
@@ -41,6 +43,14 @@ public class ConversationEntity {
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
         this.closedAt = closedAt;
+    }
+
+    public String getProfileName() {
+        return profileName;
+    }
+
+    public void setProfileName(String profileName) {
+        this.profileName = profileName;
     }
 
     public UUID getId() {

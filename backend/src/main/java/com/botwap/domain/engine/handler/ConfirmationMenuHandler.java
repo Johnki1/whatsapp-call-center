@@ -1,76 +1,91 @@
 package com.botwap.domain.engine.handler;
 
+import com.botwap.domain.engine.BotCopy;
 import com.botwap.domain.engine.InputNormalizer;
+import com.botwap.domain.engine.ServiceBranch;
 import com.botwap.domain.engine.StateHandler;
+import com.botwap.domain.menu.InteractiveOption;
+import com.botwap.domain.menu.MenuCatalog;
+import com.botwap.domain.menu.MenuOption;
+import com.botwap.domain.model.ConversationSelection;
 import com.botwap.domain.model.ConversationState;
 
+import java.util.List;
+import java.util.Optional;
+
 /**
- * Handler del Nivel 5: CONFIRMATION_MENU.
+ * Handler del Nivel 5: confirmación de la solicitud.
  *
- * <p>Opciones:
- * 1. Confirmar  -> FINAL
- * 2. Cambiar paquete -> regresa a PRODUCT_MENU (N3)
- * 3. Hablar con asesor -> FINAL (indicacion de canal)
- * 4. Cancelar -> CANCELLED
+ * <p>Acciones (mensaje interactivo nativo; los ids son {@code CONFIRM},
+ * {@code CHANGE_PACKAGE}, {@code AGENT} y {@code CANCEL}; por compatibilidad
+ * también se aceptan los números 1-4):
+ * <ol>
+ *   <li>Confirmar → {@code FINAL} con la despedida contextual de la rama.</li>
+ *   <li>Cambiar → regresa al Nivel 3 de la rama (paquete u opción del caso).</li>
+ *   <li>Hablar con un asesor → {@code HUMAN_AGENT} (handoff humano, silencio).</li>
+ *   <li>Cancelar → {@code CANCELLED}.</li>
+ * </ol>
  *
- * <p>La respuesta FINAL solo es alcanzable desde este estado (N5).</p>
+ * <p>{@code FINAL}, {@code CANCELLED} y {@code HUMAN_AGENT} son estados
+ * terminales: la conversación se cierra y el bot permanece en silencio hasta un
+ * reinicio explícito.</p>
  */
 public final class ConfirmationMenuHandler implements StateHandler {
+
+    /** Id de la acción de handoff a asesor humano en el menú de confirmación. */
+    static final String AGENT_OPTION_ID = "AGENT";
 
     @Override
     public Outcome handle(Context ctx) {
         String normalized = InputNormalizer.normalize(ctx.input());
+        ServiceBranch branch = ServiceBranch.fromSelections(ctx.selections());
+        List<MenuOption> actions = MenuCatalog.confirmationMenu(branch == ServiceBranch.PURCHASE);
 
         if (InputNormalizer.isGlobalCommand(normalized)) {
-            return handleGlobal(normalized);
+            return handleGlobal(normalized, branch);
         }
 
-        try {
-            int option = Integer.parseInt(normalized);
-            return switch (option) {
-                case 1 -> new Outcome(
-                        "Tu solicitud del paquete ha sido confirmada. Un proceso continuara con tu solicitud.",
-                        ConversationState.FINAL,
-                        null);
-                case 2 -> Outcome.textOnly(
-                        "Selecciona tu paquete:\n\n1. 5 GB\n2. 10 GB\n3. 20 GB\n4. Ilimitado",
-                        ConversationState.PRODUCT_MENU);
-                case 3 -> new Outcome(
-                        "Has solicitado hablar con un asesor. Un representante se pondra en contacto contigo pronto.",
-                        ConversationState.FINAL,
-                        null);
-                case 4 -> new Outcome(
-                        "Tu solicitud ha sido cancelada.",
-                        ConversationState.CANCELLED,
-                        null);
-                default -> Outcome.textOnly(
-                        "Opcion no valida. Selecciona 1, 2, 3 o 4.\n\n"
-                                + "1. Confirmar\n2. Cambiar paquete\n3. Hablar con un asesor\n4. Cancelar",
-                        ConversationState.CONFIRMATION_MENU);
-            };
-        } catch (NumberFormatException e) {
-            return Outcome.textOnly(
-                    "Entrada no reconocida. Selecciona 1, 2, 3 o 4.\n\n"
-                            + "1. Confirmar\n2. Cambiar paquete\n3. Hablar con un asesor\n4. Cancelar",
-                    ConversationState.CONFIRMATION_MENU);
+        Optional<MenuOption> selected = InputNormalizer.matchOption(actions, normalized);
+        if (selected.isEmpty()) {
+            return Outcome.menu(BotCopy.notUnderstood(), ConversationState.CONFIRMATION_MENU, null,
+                    InteractiveOption.listOf(actions));
         }
+
+        MenuOption action = selected.get();
+        return switch (action.optionKey()) {
+            case "CONFIRM" -> new Outcome(
+                    BotCopy.success(ctx.selections()), ConversationState.FINAL, null, List.of());
+            case "CHANGE_PACKAGE" -> Outcome.menu(
+                    BotCopy.detailPrompt(branch, categoryLabel(ctx, branch)),
+                    branch.backState(),
+                    null,
+                    detailOptions(branch));
+            case AGENT_OPTION_ID -> new Outcome(
+                    BotCopy.humanHandoff(), ConversationState.HUMAN_AGENT, null, List.of());
+            case "CANCEL" -> Outcome.textOnly(BotCopy.cancelled(), ConversationState.CANCELLED);
+            default -> Outcome.menu(BotCopy.notUnderstood(), ConversationState.CONFIRMATION_MENU,
+                    null, InteractiveOption.listOf(actions));
+        };
     }
 
-    private Outcome handleGlobal(String cmd) {
+    /** Opciones del Nivel 3 de la rama, para re-presentar el submenú al cambiar. */
+    static List<InteractiveOption> detailOptions(ServiceBranch branch) {
+        return InteractiveOption.listOf(MenuCatalog.detailOptionsFor(branch.stateKey()));
+    }
+
+    /** Categoría (Nivel 2) de la rama activa, para el prompt de regreso al Nivel 3. */
+    private static String categoryLabel(Context ctx, ServiceBranch branch) {
+        return ServiceBranch.labelFor(ctx.selections(), 2, branch.stateKey()).orElse(null);
+    }
+
+    private Outcome handleGlobal(String cmd, ServiceBranch branch) {
         return switch (cmd) {
-            case "menu" -> Outcome.textOnly(
-                    "Hola! Bienvenido.\n\nSelecciona una opcion:\n\n"
-                            + "1. Compra de paquetes\n2. Recargas\n3. Quejas o reclamos\n4. Informacion personal\n5. Soporte tecnico",
-                    ConversationState.MAIN_MENU);
-            case "cancelar" -> Outcome.textOnly(
-                    "Tu conversacion ha sido cancelada. Escribe 'hola' para comenzar de nuevo.",
-                    ConversationState.CANCELLED);
-            case "volver" -> Outcome.textOnly(
-                    "Selecciona tu paquete:\n\n1. 5 GB\n2. 10 GB\n3. 20 GB\n4. Ilimitado",
-                    ConversationState.PRODUCT_MENU);
-            default -> Outcome.textOnly(
-                    "Selecciona 1, 2, 3 o 4.",
-                    ConversationState.CONFIRMATION_MENU);
+            case "cancelar" -> Outcome.textOnly(BotCopy.cancelled(), ConversationState.CANCELLED);
+            case "volver" -> Outcome.menu(
+                    BotCopy.documentTypeMissing(), ConversationState.IDENTIFICATION_MENU, null,
+                    InteractiveOption.listOf(MenuCatalog.identificationMenu()));
+            default -> Outcome.menu(BotCopy.backToMain(), ConversationState.MAIN_MENU, null,
+                    InteractiveOption.listOf(MenuCatalog.mainMenu()));
         };
     }
 }

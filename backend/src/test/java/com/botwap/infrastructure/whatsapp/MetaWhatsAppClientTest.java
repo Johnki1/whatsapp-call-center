@@ -37,6 +37,7 @@ class MetaWhatsAppClientTest {
     private static final String WABA_ID = "test-waba";
     private static final String WA_ID = "573001112222";
     private static final String TEXT = "hola desde el test";
+    private static final String TEXT_PAYLOAD = "{\"text\":\"hola desde el test\"}";
     private static final String WAMID = "wamid.test-123";
 
     private static final String EXPECTED_URI = "/v21.0/123456789012345/messages";
@@ -65,7 +66,7 @@ class MetaWhatsAppClientTest {
     void callsMessagesEndpointWithApiVersionAndPhoneNumberId() {
         server.respond(200, okBody(WAMID));
 
-        StepVerifier.create(client().sendMessage(WA_ID, TEXT))
+        StepVerifier.create(client().sendMessage(WA_ID, TEXT_PAYLOAD))
                 .expectNextCount(1)
                 .verifyComplete();
 
@@ -78,7 +79,7 @@ class MetaWhatsAppClientTest {
     void sendsAccessTokenAsBearerAuthorizationHeader() {
         server.respond(200, okBody(WAMID));
 
-        StepVerifier.create(client().sendMessage(WA_ID, TEXT))
+        StepVerifier.create(client().sendMessage(WA_ID, TEXT_PAYLOAD))
                 .expectNextCount(1)
                 .verifyComplete();
 
@@ -90,7 +91,7 @@ class MetaWhatsAppClientTest {
     void sendsExactTextMessagePayload() throws Exception {
         server.respond(200, okBody(WAMID));
 
-        StepVerifier.create(client().sendMessage(WA_ID, TEXT))
+        StepVerifier.create(client().sendMessage(WA_ID, TEXT_PAYLOAD))
                 .expectNextCount(1)
                 .verifyComplete();
 
@@ -107,7 +108,7 @@ class MetaWhatsAppClientTest {
     void returnsWamidFromSuccessfulResponse() {
         server.respond(200, okBody(WAMID));
 
-        StepVerifier.create(client().sendMessage(WA_ID, TEXT))
+        StepVerifier.create(client().sendMessage(WA_ID, TEXT_PAYLOAD))
                 .assertNext(result -> assertThat(result).isEqualTo(new WhatsAppSendResult(WAMID)))
                 .verifyComplete();
     }
@@ -116,7 +117,7 @@ class MetaWhatsAppClientTest {
     void failsWhenSuccessResponseHasNoMessagesArray() {
         server.respond(200, JSON_WITHOUT_MESSAGES);
 
-        StepVerifier.create(client().sendMessage(WA_ID, TEXT))
+        StepVerifier.create(client().sendMessage(WA_ID, TEXT_PAYLOAD))
                 .expectErrorSatisfies(error -> {
                     assertThat(error).isInstanceOf(MetaDeliveryException.class);
                     assertThat(error.getMessage()).contains("status=200").contains("messages");
@@ -128,7 +129,7 @@ class MetaWhatsAppClientTest {
     void failsWhenSuccessResponseHasEmptyMessagesArray() {
         server.respond(200, JSON_EMPTY_MESSAGES);
 
-        StepVerifier.create(client().sendMessage(WA_ID, TEXT))
+        StepVerifier.create(client().sendMessage(WA_ID, TEXT_PAYLOAD))
                 .expectErrorSatisfies(error -> {
                     assertThat(error).isInstanceOf(MetaDeliveryException.class);
                     assertThat(error.getMessage()).contains("status=200");
@@ -140,7 +141,7 @@ class MetaWhatsAppClientTest {
     void failsOnBadRequest400() {
         server.respond(400, errorBody(131026, "Message undeliverable."));
 
-        StepVerifier.create(client().sendMessage(WA_ID, TEXT))
+        StepVerifier.create(client().sendMessage(WA_ID, TEXT_PAYLOAD))
                 .expectErrorSatisfies(error -> {
                     assertThat(error).isInstanceOf(MetaDeliveryException.class);
                     assertThat(error.getMessage())
@@ -156,7 +157,7 @@ class MetaWhatsAppClientTest {
     void failsOnUnauthorized401() {
         server.respond(401, errorBody(190, "Invalid OAuth access token."));
 
-        StepVerifier.create(client().sendMessage(WA_ID, TEXT))
+        StepVerifier.create(client().sendMessage(WA_ID, TEXT_PAYLOAD))
                 .expectErrorSatisfies(error -> {
                     assertThat(error).isInstanceOf(MetaDeliveryException.class);
                     assertThat(error.getMessage()).contains("status=401").contains("code=190");
@@ -168,7 +169,7 @@ class MetaWhatsAppClientTest {
     void failsOnTooManyRequests429() {
         server.respond(429, errorBody(130429, "Rate limit hit."));
 
-        StepVerifier.create(client().sendMessage(WA_ID, TEXT))
+        StepVerifier.create(client().sendMessage(WA_ID, TEXT_PAYLOAD))
                 .expectErrorSatisfies(error -> {
                     assertThat(error).isInstanceOf(MetaDeliveryException.class);
                     assertThat(error.getMessage()).contains("status=429").contains("code=130429");
@@ -180,7 +181,7 @@ class MetaWhatsAppClientTest {
     void failsOnInternalServerError500() {
         server.respond(500, errorBody(131000, "Something went wrong."));
 
-        StepVerifier.create(client().sendMessage(WA_ID, TEXT))
+        StepVerifier.create(client().sendMessage(WA_ID, TEXT_PAYLOAD))
                 .expectErrorSatisfies(error -> {
                     assertThat(error).isInstanceOf(MetaDeliveryException.class);
                     assertThat(error.getMessage()).contains("status=500").contains("code=131000");
@@ -192,7 +193,7 @@ class MetaWhatsAppClientTest {
     void failsWithStatusOnlyWhenErrorBodyIsNotJson() {
         server.respond(503, HTML_ERROR_BODY);
 
-        StepVerifier.create(client().sendMessage(WA_ID, TEXT))
+        StepVerifier.create(client().sendMessage(WA_ID, TEXT_PAYLOAD))
                 .expectErrorSatisfies(error -> {
                     assertThat(error).isInstanceOf(MetaDeliveryException.class);
                     assertThat(error.getMessage()).contains("status=503");
@@ -205,7 +206,7 @@ class MetaWhatsAppClientTest {
     void failsWithStatusOnlyWhenErrorBodyIsEmpty() {
         server.respond(502, "");
 
-        StepVerifier.create(client().sendMessage(WA_ID, TEXT))
+        StepVerifier.create(client().sendMessage(WA_ID, TEXT_PAYLOAD))
                 .expectErrorSatisfies(error -> {
                     assertThat(error).isInstanceOf(MetaDeliveryException.class);
                     assertThat(error.getMessage()).contains("status=502");
@@ -217,7 +218,7 @@ class MetaWhatsAppClientTest {
     void failsWhenResponseExceedsConfiguredTimeout() {
         server.respondAfter(200, okBody("wamid.late"), Duration.ofSeconds(3));
 
-        StepVerifier.create(clientWithTimeouts(300L, 200L).sendMessage(WA_ID, TEXT))
+        StepVerifier.create(clientWithTimeouts(300L, 200L).sendMessage(WA_ID, TEXT_PAYLOAD))
                 .expectError()
                 .verify(Duration.ofSeconds(5));
     }
@@ -309,7 +310,7 @@ class MetaWhatsAppClientTest {
         logger.addAppender(appender);
 
         try {
-            StepVerifier.create(client().sendMessage(WA_ID, TEXT))
+            StepVerifier.create(client().sendMessage(WA_ID, TEXT_PAYLOAD))
                     .expectErrorSatisfies(error -> {
                         assertThat(error.getMessage()).doesNotContain(TEST_TOKEN);
                         assertThat(error.getMessage()).doesNotContain("Bearer");

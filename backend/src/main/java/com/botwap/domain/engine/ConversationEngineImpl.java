@@ -4,20 +4,33 @@ import com.botwap.domain.engine.handler.CategoryMenuHandler;
 import com.botwap.domain.engine.handler.ConfirmationMenuHandler;
 import com.botwap.domain.engine.handler.DetailMenuHandler;
 import com.botwap.domain.engine.handler.DocumentInputHandler;
-import com.botwap.domain.engine.handler.GenericCategoryMenuHandler;
 import com.botwap.domain.engine.handler.IdentificationMenuHandler;
 import com.botwap.domain.engine.handler.MainMenuHandler;
+import com.botwap.domain.engine.handler.NameInputHandler;
 import com.botwap.domain.engine.handler.ProductMenuHandler;
-import com.botwap.domain.model.Conversation;
-import com.botwap.domain.model.ConversationSelection;
-import com.botwap.domain.model.ConversationState;
+import com.botwap.domain.menu.InteractiveOption;
 import com.botwap.domain.menu.MenuCatalog;
+import com.botwap.domain.model.Conversation;
+import com.botwap.domain.model.ConversationState;
 import org.springframework.stereotype.Component;
 
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Implementación de la máquina de estados: resuelve el {@link StateHandler} del
+ * estado actual y delega la transición.
+ *
+ * <p>Los menús de categoría (Nivel 2) se registran a partir de
+ * {@link ServiceBranch}, de modo que las cinco ramas comparten un único handler
+ * parametrizado.</p>
+ *
+ * <p>Los estados terminales ({@code FINAL}, {@code CANCELLED}) no tienen handler:
+ * el motor responde {@link EngineResult#silent(ConversationState)} —el bot
+ * permanece en silencio— salvo que el usuario reinicie explícitamente
+ * ({@code hola} / {@code menu}).</p>
+ */
 @Component
 public final class ConversationEngineImpl implements ConversationEngine {
 
@@ -30,28 +43,14 @@ public final class ConversationEngineImpl implements ConversationEngine {
     private static Map<ConversationState, StateHandler> buildHandlers() {
         Map<ConversationState, StateHandler> map = new EnumMap<>(ConversationState.class);
         map.put(ConversationState.MAIN_MENU, new MainMenuHandler());
-        map.put(ConversationState.PURCHASE_MENU,
-                new CategoryMenuHandler("MAIN_MENU", "PURCHASE_MENU", MenuCatalog.purchaseMenu(),
-                        "¿Que deseas comprar?",
-                        selected -> ConversationState.PRODUCT_MENU));
-        map.put(ConversationState.RECHARGE_MENU,
-                new GenericCategoryMenuHandler("MAIN_MENU", "RECHARGE_MENU", MenuCatalog.rechargeMenu(),
-                        "¿Que deseas recargar?",
-                        MenuCatalog.rechargeDetailMenu()));
-        map.put(ConversationState.COMPLAINT_MENU,
-                new GenericCategoryMenuHandler("MAIN_MENU", "COMPLAINT_MENU", MenuCatalog.complaintMenu(),
-                        "¿Que deseas reportar?",
-                        MenuCatalog.complaintDetailMenu()));
-        map.put(ConversationState.PERSONAL_INFO_MENU,
-                new GenericCategoryMenuHandler("MAIN_MENU", "PERSONAL_INFO_MENU", MenuCatalog.personalInfoMenu(),
-                        "¿Que informacion deseas?",
-                        MenuCatalog.personalInfoDetailMenu()));
-        map.put(ConversationState.SUPPORT_MENU,
-                new GenericCategoryMenuHandler("MAIN_MENU", "SUPPORT_MENU", MenuCatalog.supportMenu(),
-                        "¿En que soporte necesitas ayuda?",
-                        MenuCatalog.supportDetailMenu()));
+        for (ServiceBranch branch : ServiceBranch.values()) {
+            if (branch != ServiceBranch.UNKNOWN) {
+                map.put(ConversationState.valueOf(branch.stateKey()), new CategoryMenuHandler(branch));
+            }
+        }
         map.put(ConversationState.PRODUCT_MENU, new ProductMenuHandler());
         map.put(ConversationState.DETAIL_MENU, new DetailMenuHandler());
+        map.put(ConversationState.NAME_INPUT, new NameInputHandler());
         map.put(ConversationState.IDENTIFICATION_MENU, new IdentificationMenuHandler());
         map.put(ConversationState.DOCUMENT_INPUT, new DocumentInputHandler());
         map.put(ConversationState.CONFIRMATION_MENU, new ConfirmationMenuHandler());
@@ -63,55 +62,42 @@ public final class ConversationEngineImpl implements ConversationEngine {
         ConversationState current = request.currentState();
 
         if (current == null) {
-            return handleNoConversation(request.input());
+            return welcome(request);
         }
 
         StateHandler handler = handlersByState.get(current);
-        if (handler == null) {
+        if (handler == null || current.isTerminal()) {
             return handleTerminal(current, request.input());
         }
 
         StateHandler.Context ctx = new StateHandler.Context(
                 request.input(),
                 current,
+                request.userName(),
                 List.copyOf(request.selections()));
 
         StateHandler.Outcome outcome = handler.handle(ctx);
 
-        return new EngineResult(outcome.responseText(), outcome.nextState(), outcome.selection());
+        return new EngineResult(outcome.responseText(), outcome.nextState(), outcome.selection(),
+                outcome.options());
     }
 
-    private EngineResult handleNoConversation(String input) {
-        String normalized = InputNormalizer.normalize(input);
-        if (InputNormalizer.isHello(normalized)) {
-            return new EngineResult("Hola! Bienvenido.\n\nSelecciona una opcion:\n\n" + formatMain(),
-                    ConversationState.MAIN_MENU, null);
-        }
-        return new EngineResult("Hola! Bienvenido.\n\nSelecciona una opcion:\n\n" + formatMain(),
-                ConversationState.MAIN_MENU, null);
+    /** Primera interacción (sin conversación): bienvenida personalizada + menú. */
+    private EngineResult welcome(EngineRequest request) {
+        return EngineResult.menu(BotCopy.welcome(request.userName()), ConversationState.MAIN_MENU,
+                null, InteractiveOption.listOf(MenuCatalog.mainMenu()));
     }
 
+    /**
+     * Estado terminal: la conversación permanece cerrada y el bot en silencio.
+     * Un mensaje que no sea un reinicio explícito no genera respuesta alguna
+     * (evita el bucle de mensajes automáticos tras la despedida).
+     */
     private EngineResult handleTerminal(ConversationState current, String input) {
-        String normalized = InputNormalizer.normalize(input);
-        if (InputNormalizer.isHello(normalized) || "menu".equals(normalized)) {
-            return new EngineResult("Hola! Bienvenido.\n\nSelecciona una opcion:\n\n" + formatMain(),
-                    ConversationState.MAIN_MENU, null);
+        if (InputNormalizer.isRestartCommand(InputNormalizer.normalize(input))) {
+            return EngineResult.menu(BotCopy.backToMain(), ConversationState.MAIN_MENU, null,
+                    InteractiveOption.listOf(MenuCatalog.mainMenu()));
         }
-        if ("cancelar".equals(normalized)) {
-            return new EngineResult("Tu conversacion ha sido cancelada. Escribe 'hola' para comenzar de nuevo.",
-                    ConversationState.CANCELLED, null);
-        }
-        return new EngineResult("Conversacion finalizada. Escribe 'hola' para comenzar de nuevo.", current, null);
-    }
-
-    /** Formatea el menu principal para la bienvenida. */
-    private static String formatMain() {
-        StringBuilder sb = new StringBuilder();
-        int i = 1;
-        for (var opt : MenuCatalog.mainMenu()) {
-            sb.append(i).append(". ").append(opt.displayLabel()).append("\n");
-            i++;
-        }
-        return sb.toString().trim();
+        return EngineResult.silent(current);
     }
 }

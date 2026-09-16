@@ -49,6 +49,9 @@ services:
       WHATSAPP_APP_ID: ${WHATSAPP_APP_ID:-}
       WHATSAPP_API_VERSION: ${WHATSAPP_API_VERSION:-v25.0}
       WHATSAPP_GRAPH_BASE_URL: ${WHATSAPP_GRAPH_BASE_URL:-https://graph.facebook.com}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      APP_GEMINI_ENABLED: ${APP_GEMINI_ENABLED:-true}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
     ports:
       # Publicado SOLO en loopback: Nginx (reverse proxy) es la única
       # puerta de entrada pública. El NSG de Azure bloquea 8080, y este
