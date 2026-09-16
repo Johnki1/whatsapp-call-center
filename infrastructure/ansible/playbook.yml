@@ -235,6 +235,11 @@
         group: root
         mode: "0644"
 
+    - name: Limpiar fuentes antiguas del backend en la VM
+      ansible.builtin.file:
+        path: "{{ deploy_dir }}/backend/src"
+        state: absent
+
     - name: Copiar fuentes del backend (src/)
       ansible.builtin.copy:
         src: ../../backend/src/
