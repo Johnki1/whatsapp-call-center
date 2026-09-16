@@ -271,9 +271,6 @@ public class InboundMessageOrchestrator {
      * que no es comando global, ni saludo, ni opción válida del menú, ni número.
      */
     private boolean isFreeTextFallback(EngineResult result, String text) {
-        if (result.hasMenu() || result.selection() != null) {
-            return false;
-        }
         if (result.nextState() == null) {
             return false;
         }
@@ -285,7 +282,17 @@ public class InboundMessageOrchestrator {
         if (InputNormalizer.asNumber(normalized).isPresent()) {
             return false;
         }
-        return !result.hasResponse() || BotCopy.notUnderstood().equals(result.responseText());
+        // El re-prompt de "no entendido" puede ir acompañado del menú nativo de
+        // re-envío (Outcome.menu con options). Si el texto de respuesta es exactamente
+        // el fallback de BotCopy.notUnderstood(), el usuario envió texto libre que
+        // debe derivarse a Gemini — independientemente de que un menú se reenvíe.
+        if (BotCopy.notUnderstood().equals(result.responseText())) {
+            return true;
+        }
+        if (result.hasMenu() || result.selection() != null) {
+            return false;
+        }
+        return !result.hasResponse();
     }
 
     /**
