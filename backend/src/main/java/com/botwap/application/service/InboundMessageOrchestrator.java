@@ -5,6 +5,7 @@ import com.botwap.domain.engine.ConversationEngine;
 import com.botwap.domain.engine.EngineRequest;
 import com.botwap.domain.engine.EngineResult;
 import com.botwap.domain.engine.InputNormalizer;
+import com.botwap.domain.engine.ServiceBranch;
 import com.botwap.domain.menu.MenuCatalog;
 import com.botwap.domain.model.Conversation;
 import com.botwap.domain.model.ConversationSelection;
@@ -29,6 +30,8 @@ import com.botwap.application.exception.ConcurrencyConflictException;
 import reactor.core.publisher.Mono;
 
 import java.time.Instant;
+import java.util.List;
+import java.util.Locale;
 
 @Service
 public class InboundMessageOrchestrator {
@@ -297,7 +300,7 @@ public class InboundMessageOrchestrator {
 
     /**
      * Deriva el texto libre a Gemini (fail-open): {@code AGENT} → handoff doble;
-     * respuesta útil → texto de la IA; fallo → re-prompt del motor.
+     * intención clara → navegación del motor; duda o fallo → re-prompt contextual.
      */
     private Mono<Void> resolveWithAi(Conversation conversation, String waId, String wamid,
                                      String text, java.util.List<ConversationSelection> selections,
@@ -305,14 +308,15 @@ public class InboundMessageOrchestrator {
         if (aiAssistant == null || !aiAssistant.isEnabled()) {
             return persistFallback(conversation, waId, wamid, text, fallback);
         }
-        java.util.List<String> menuOptions = MenuCatalog.optionsFor(conversation.state().name())
-                .stream().map(o -> o.optionKey() + ": " + o.label()).toList();
+        List<String> menuOptions = fallback.options()
+                .stream().map(o -> o.id() + ": " + o.title()).toList();
         AiAssistant.AiRequest aiRequest = new AiAssistant.AiRequest(
                 conversation.profileName(), conversation.state().name(), menuOptions, text);
-        return aiAssistant.assist(aiRequest)
-                .map(reply -> toAiResult(conversation, reply, fallback))
+        return Mono.defer(() -> aiAssistant.assist(aiRequest))
+                .map(reply -> toAiResult(conversation, reply, fallback, selections))
+                .defaultIfEmpty(fallback)
                 .onErrorResume(e -> {
-                    log.warn("Gemini no disponible, se usa el motor local: {}", e.toString());
+                    log.warn("Gemini no disponible, se usa el motor local: {}", e.getClass().getSimpleName());
                     return Mono.just(fallback);
                 })
                 .flatMap(aiResult -> {
@@ -335,21 +339,44 @@ public class InboundMessageOrchestrator {
 
     /** Traduce la respuesta de Gemini a {@code EngineResult} (con intención AGENT). */
     private EngineResult toAiResult(Conversation conversation, AiAssistant.AiReply reply,
-                                    EngineResult fallback) {
-        if (reply == null || "AGENT".equalsIgnoreCase(reply.intent())) {
+                                    EngineResult fallback, List<ConversationSelection> selections) {
+        if (reply == null) {
+            return fallback;
+        }
+        String intent = reply.intent() == null ? "OTHER"
+                : reply.intent().trim().toUpperCase(Locale.ROOT);
+        if ("AGENT".equals(intent)) {
             return EngineResult.textOnly(BotCopy.humanHandoff(), ConversationState.HUMAN_AGENT);
         }
-        if (reply.hasReply()) {
-            java.util.List<com.botwap.domain.menu.InteractiveOption> options =
-                    MenuCatalog.optionsFor(conversation.state().name()).isEmpty() ? java.util.List.of()
-                            : com.botwap.domain.menu.InteractiveOption.listOf(
-                                    MenuCatalog.optionsFor(conversation.state().name()));
-            if (options.isEmpty()) {
-                return EngineResult.textOnly(reply.reply(), conversation.state());
-            }
-            return EngineResult.menu(reply.reply(), conversation.state(), null, options);
+
+        // La IA propone una navegación; el motor sigue siendo dueño de las transiciones.
+        String branchKey = switch (intent) {
+            case "PACKAGES", "PURCHASE_MENU" -> "PURCHASE";
+            case "REFILLS", "RECHARGE_MENU" -> "RECHARGE";
+            case "COMPLAINTS", "COMPLAINT_MENU" -> "COMPLAINT";
+            case "PERSONAL_INFO_MENU" -> "PERSONAL_INFO";
+            case "SUPPORT_MENU" -> "SUPPORT";
+            default -> intent;
+        };
+        ServiceBranch branch = ServiceBranch.fromOptionKey(branchKey);
+        EngineResult result = fallback;
+        if (branch != ServiceBranch.UNKNOWN) {
+            Conversation main = conversation.withState(ConversationState.MAIN_MENU);
+            result = engine.process(new EngineRequest(main.id(), main.waId(), branch.name(),
+                    main.state(), main.profileName(), selections), main);
+        } else if (conversation.state().level() == 2
+                && fallback.options().stream().anyMatch(option -> option.id().equals(intent))) {
+            // Solo categorías del menú actual: nunca confirmar, comprar ni identificar por IA.
+            result = engine.process(new EngineRequest(conversation.id(), conversation.waId(), intent,
+                    conversation.state(), conversation.profileName(), selections), conversation);
         }
-        return fallback;
+
+        if (!reply.hasReply()) {
+            return result;
+        }
+        String response = result == fallback ? reply.reply()
+                : reply.reply() + "\n\n" + result.responseText();
+        return new EngineResult(response, result.nextState(), result.selection(), result.options());
     }
 
     /** Persiste el re-prompt del motor cuando la IA está deshabilitada o falla. */

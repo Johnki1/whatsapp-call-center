@@ -41,7 +41,10 @@ public interface AiAssistant {
      * @param reply  texto amable para el usuario (puede llegar vacío)
      * @param intent intención clasificada: {@code GREETING}, {@code PURCHASE},
      *               {@code RECHARGE}, {@code COMPLAINT}, {@code PERSONAL_INFO},
-     *               {@code SUPPORT}, {@code AGENT} o {@code OTHER}
+     *               {@code SUPPORT}, {@code AGENT} o {@code OTHER}; también se
+     *               admite el ID de una opción del menú de categoría actual.
+     *               El adaptador convierte confianza insuficiente en {@code OTHER}.
+     *               La intención nunca autoriza operaciones ni omite identificación.
      */
     record AiReply(String reply, String intent) {
 
