@@ -14,6 +14,10 @@ public interface ConversationRepository {
 
     Mono<Conversation> findById(UUID id);
 
+    /** Lote bloqueado hasta el commit; invocar dentro de una transacción R2DBC. */
+    reactor.core.publisher.Flux<Conversation> findReminderDueForUpdate(
+            java.time.Instant cutoff, java.time.Instant windowStart, int limit);
+
     /** Conversación activa del usuario (máximo una por {@code wa_id}). */
     Mono<Conversation> findActiveByWaId(String waId);
 

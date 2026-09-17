@@ -57,6 +57,13 @@ public class R2dbcConversationRepositoryAdapter implements ConversationRepositor
     }
 
     @Override
+    public reactor.core.publisher.Flux<Conversation> findReminderDueForUpdate(
+            Instant cutoff, Instant windowStart, int limit) {
+        return repository.findReminderDueForUpdate(toOffset(cutoff), toOffset(windowStart), limit)
+                .map(this::toDomain);
+    }
+
+    @Override
     public Mono<Conversation> insert(Conversation conversation) {
         log.warn("DIAG save: INSERT branch, id={} newState={}", conversation.id(), conversation.state());
         return repository.insertConversation(
@@ -68,7 +75,14 @@ public class R2dbcConversationRepositoryAdapter implements ConversationRepositor
                         toOffset(conversation.createdAt()),
                         toOffset(conversation.updatedAt()),
                         toOffsetOrNull(conversation.closedAt()),
-                        conversation.profileName())
+                        conversation.profileName(),
+                        toOffsetOrNull(conversation.lastInteractionAt()),
+                        toOffsetOrNull(conversation.lastInboundAt()),
+                        toOffsetOrNull(conversation.lastBotMessageAt()),
+                        toOffsetOrNull(conversation.reminderAt()),
+                        conversation.reengagementPending(),
+                        conversation.lastPromptPayload(),
+                        conversation.awaitingReplyMessageId())
                 .map(rows -> conversation.withVersion(0L))
                 .onErrorMap(DataIntegrityViolationException.class,
                         e -> new DomainException("No se pudo crear la conversación (¿ya existe una activa?)", e));
@@ -88,13 +102,19 @@ public class R2dbcConversationRepositoryAdapter implements ConversationRepositor
                         toOffset(now),
                         toOffsetOrNull(conversation.closedAt()),
                         conversation.profileName(),
-                        conversation.version())
+                        conversation.version(),
+                        toOffsetOrNull(conversation.lastInteractionAt()),
+                        toOffsetOrNull(conversation.lastInboundAt()),
+                        toOffsetOrNull(conversation.lastBotMessageAt()),
+                        toOffsetOrNull(conversation.reminderAt()),
+                        conversation.reengagementPending(),
+                        conversation.lastPromptPayload(),
+                        conversation.awaitingReplyMessageId())
                 .flatMap(rows -> {
                     log.warn("DIAG update: id={} rows={} newState={} expectedVersion={}",
                             conversation.id(), rows, conversation.state(), conversation.version());
                     return rows == 1
-                            ? Mono.just(new Conversation(conversation.id(), conversation.waId(), conversation.state(), conversation.status(),
-                                    conversation.profileName(), newVersion, conversation.createdAt(), now, conversation.closedAt()))
+                            ? Mono.just(conversation.withVersion(newVersion))
                             : Mono.error(new ConcurrencyConflictException(conversation.id()));
                 });
     }
@@ -109,7 +129,8 @@ public class R2dbcConversationRepositoryAdapter implements ConversationRepositor
                 e.getVersion(),
                 e.getCreatedAt(),
                 e.getUpdatedAt(),
-                e.getClosedAt());
+                e.getClosedAt(),
+                e.getLastInteractionAt(), e.getLastInboundAt(), e.getLastBotMessageAt(), e.getReminderAt(), e.getReengagementPending(), e.getLastPromptPayload(), e.getAwaitingReplyMessageId());
     }
 
     private static OffsetDateTime toOffset(Instant instant) {

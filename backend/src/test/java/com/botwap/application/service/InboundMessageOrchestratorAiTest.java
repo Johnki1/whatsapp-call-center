@@ -18,7 +18,9 @@ class InboundMessageOrchestratorAiTest {
     @Test
     void supportIntentOpensSupportMenuAndRecordsBranch() {
         var orchestrator = new InboundMessageOrchestrator(new ConversationEngineImpl(),
-                null, null, null, null, null, null, null);
+                null, null, null, null, null, null, null,
+                new com.botwap.config.InactivityProperties(java.time.Duration.ofMinutes(30)),
+                java.time.Clock.systemUTC());
         var conversation = Conversation.newActive("test-user", "Usuario");
         var fallback = EngineResult.menu(BotCopy.notUnderstood(), ConversationState.MAIN_MENU,
                 null, InteractiveOption.listOf(MenuCatalog.mainMenu()));

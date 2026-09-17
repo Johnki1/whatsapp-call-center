@@ -24,3 +24,8 @@ app:
     lease-duration-seconds: 2
     max-attempts: 3
     backoff-base-seconds: 1
+  # ===== Inactividad en tests: desactivado (los tests invocan processDue() directamente) =====
+  inactivity:
+    enabled: false
+    poll-interval-ms: 1000
+    reengagement-delay: 30m

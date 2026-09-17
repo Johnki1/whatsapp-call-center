@@ -3,7 +3,6 @@ package com.botwap;
 import com.botwap.domain.model.ConversationState;
 import com.botwap.domain.model.OutboxMessage;
 import com.botwap.domain.port.ConversationRepository;
-import com.botwap.domain.port.MessageRepository;
 import com.botwap.domain.port.OutboxRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -686,8 +685,8 @@ class ConversationFlowIntegrationTest extends BaseIntegrationTest {
         UUID convId = UUID.randomUUID();
         UUID msgId = UUID.randomUUID();
         databaseClient.sql("""
-                        INSERT INTO conversation (id, wa_id, state, status, version, created_at, updated_at)
-                        VALUES (:id, 'W-RB', 'MAIN_MENU', 'ACTIVE', 0, now(), now())
+                        INSERT INTO conversation (id, wa_id, state, status, version, created_at, updated_at, last_interaction_at)
+                        VALUES (:id, 'W-RB', 'MAIN_MENU', 'ACTIVE', 0, now(), now(), now())
                         """).bind("id", convId).then().block();
         databaseClient.sql("""
                         INSERT INTO message (id, conversation_id, direction, status, type, content, created_at)

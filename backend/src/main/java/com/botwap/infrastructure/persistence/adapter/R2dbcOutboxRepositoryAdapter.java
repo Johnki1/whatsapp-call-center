@@ -100,17 +100,33 @@ public class R2dbcOutboxRepositoryAdapter implements OutboxRepository {
     @Override
     public Mono<Long> markSent(UUID id, Instant sentAt) {
         return databaseClient.sql("""
-                        UPDATE outbox_message
-                        SET status = 'SENT',
-                            sent_at = :sentAt,
-                            lease_expires_at = NULL,
-                            updated_at = now()
-                        WHERE id = :id AND status = 'SENDING'
+                        WITH sent AS (
+                            UPDATE outbox_message
+                            SET status = 'SENT', sent_at = :sentAt,
+                                lease_expires_at = NULL, updated_at = now()
+                            WHERE id = :id AND status = 'SENDING'
+                            RETURNING conversation_id, wa_id, message_id
+                        ), activity AS (
+                            UPDATE conversation c
+                            SET last_interaction_at = GREATEST(c.last_interaction_at, :sentAt),
+                                last_bot_message_at = CASE
+                                    WHEN c.awaiting_reply_message_id = s.message_id THEN :sentAt
+                                    ELSE c.last_bot_message_at END,
+                                reminder_at = CASE
+                                    WHEN c.awaiting_reply_message_id = s.message_id
+                                         AND c.reminder_at IS NOT NULL THEN :sentAt
+                                    ELSE c.reminder_at END,
+                                updated_at = now(), version = c.version + 1
+                            FROM sent s
+                            WHERE c.id = s.conversation_id AND c.wa_id = s.wa_id
+                            RETURNING c.id
+                        )
+                        SELECT count(*) AS total FROM sent
                         """)
                 .bind("id", id)
                 .bind("sentAt", OffsetDateTime.ofInstant(sentAt, ZoneOffset.UTC))
-                .fetch()
-                .rowsUpdated();
+                .map(row -> row.get("total", Long.class))
+                .one();
     }
 
     @Override

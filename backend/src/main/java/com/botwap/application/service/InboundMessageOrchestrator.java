@@ -46,6 +46,8 @@ public class InboundMessageOrchestrator {
     private final TransactionalOperator tx;
     private final OutboxPayloadBuilder payloadBuilder;
     private final AiAssistant aiAssistant;
+    private final com.botwap.config.InactivityProperties inactivity;
+    private final java.time.Clock clock;
 
     /**
      * Número del asesor/administrador que recibe la alerta de handoff humano.
@@ -63,7 +65,9 @@ public class InboundMessageOrchestrator {
                                       OutboxRepository outboxRepository,
                                       TransactionalOperator tx,
                                       OutboxPayloadBuilder payloadBuilder,
-                                      AiAssistant aiAssistant) {
+                                      AiAssistant aiAssistant,
+                                      com.botwap.config.InactivityProperties inactivity,
+                                      java.time.Clock clock) {
         this.engine = engine;
         this.conversationRepository = conversationRepository;
         this.selectionRepository = selectionRepository;
@@ -72,6 +76,8 @@ public class InboundMessageOrchestrator {
         this.tx = tx;
         this.payloadBuilder = payloadBuilder;
         this.aiAssistant = aiAssistant;
+        this.inactivity = inactivity;
+        this.clock = clock;
     }
 
     /**
@@ -206,6 +212,10 @@ public class InboundMessageOrchestrator {
     private Mono<Void> processWithConversation(Conversation conversation, String waId,
                                                String wamid, String text, String profileName) {
         Conversation withProfile = refreshProfileName(conversation, profileName);
+        if (conversation.requiresReengagement(clock.instant(), inactivity.reengagementDelay())) {
+            return selectionRepository.findByConversationId(conversation.id()).collectList()
+                    .flatMap(selections -> processReengagement(withProfile, wamid, text, selections));
+        }
         if (conversation.state() == ConversationState.HUMAN_AGENT
                 && isWakeWord(text)) {
             return selectionRepository.findByConversationId(conversation.id()).collectList()
@@ -248,6 +258,57 @@ public class InboundMessageOrchestrator {
 
                     return persistEngineResult(withProfile, updated, inbound, result, waId);
                 });
+    }
+
+    private Mono<Void> processReengagement(Conversation conversation, String wamid, String text,
+                                           List<ConversationSelection> selections) {
+        String answer = InputNormalizer.normalize(text);
+        if (conversation.reengagementPending() && ("no".equals(answer) || "resume_no".equals(answer))) {
+            return conversationRepository.update(conversation.receivedAt(clock.instant())
+                            .withStatus(ConversationStatus.CLOSED))
+                    .then(Mono.defer(() -> insertNewConversation(conversation.waId(), conversation.profileName())))
+                    .flatMap(fresh -> persistEngineResult(fresh, fresh,
+                            Message.inbound(fresh.id(), wamid, text),
+                            EngineResult.menu(BotCopy.welcome(fresh.profileName()), ConversationState.MAIN_MENU,
+                                    null, com.botwap.domain.menu.InteractiveOption.listOf(MenuCatalog.mainMenu())),
+                            fresh.waId()));
+        }
+        if (conversation.reengagementPending()
+                && ("sí".equals(answer) || "si".equals(answer) || "resume_yes".equals(answer))) {
+            EngineResult restored = payloadBuilder.restore(conversation.lastPromptPayload(), conversation.state());
+            Conversation resumed = conversation.awaitingReply(null, conversation.lastPromptPayload(), false, null);
+            return persistEngineResult(conversation, resumed, Message.inbound(conversation.id(), wamid, text),
+                    restored, conversation.waId());
+        }
+        // No interpretar el primer mensaje ni respuestas ambiguas como opciones del menú suspendido.
+        String label = reengagementLabel(conversation, selections);
+        EngineResult question = EngineResult.menu("¿Aún estás interesado en la consulta de " + label + "?",
+                conversation.state(), null, List.of(
+                        new com.botwap.domain.menu.InteractiveOption("RESUME_YES", "Sí"),
+                        new com.botwap.domain.menu.InteractiveOption("RESUME_NO", "No")));
+        Conversation pending = conversation.awaitingReply(null, conversation.lastPromptPayload(), true, null);
+        return persistEngineResult(conversation, pending, Message.inbound(conversation.id(), wamid, text),
+                question, conversation.waId());
+    }
+
+    private String reengagementLabel(Conversation conversation, List<ConversationSelection> selections) {
+        if (conversation.state() == ConversationState.MAIN_MENU) {
+            return "Servicio al cliente";
+        }
+        // Los niveles de identificación contienen datos personales, no nombres de servicios.
+        // Solo considerar la rama vigente, ignorando selecciones antiguas de otras ramas.
+        ServiceBranch branch = ServiceBranch.fromSelections(selections);
+        var root = selections.stream().filter(s -> s.level() == 1 && "MAIN_MENU".equals(s.stateKey()))
+                .findFirst();
+        Instant branchStart = root.map(ConversationSelection::selectedAt).orElse(Instant.MIN);
+        return selections.stream()
+                .filter(s -> s.level() >= 2 && s.level() <= 3
+                        && s.level() < conversation.state().level())
+                .filter(s -> branch.stateKey().equals(s.stateKey())
+                        || (branch == ServiceBranch.PURCHASE && "PRODUCT_MENU".equals(s.stateKey())))
+                .filter(s -> s.selectedAt() != null && !s.selectedAt().isBefore(branchStart))
+                .max(java.util.Comparator.comparing(ConversationSelection::selectedAt))
+                .map(ConversationSelection::displayLabel).orElse(branch.displayName());
     }
 
     /** Actualiza el nombre de perfil si el webhook trae uno nuevo y distinto. */
@@ -426,7 +487,8 @@ public class InboundMessageOrchestrator {
     private Mono<Void> persistHandoffAll(Conversation base, Conversation updated,
                                          Message inbound, Message clientOutbound, Message adminOutbound,
                                          ConversationSelection selection) {
-        Mono<Void> saveConversation = conversationRepository.update(updated).then();
+        Mono<Void> saveConversation = conversationRepository.update(
+                updated.receivedAt(clock.instant())).then();
         Mono<Void> saveInbound = messageRepository.save(inbound).then();
         Mono<Void> saveClient = messageRepository.save(clientOutbound).then();
         Mono<Void> saveAdmin = messageRepository.save(adminOutbound).then();
@@ -456,7 +518,8 @@ public class InboundMessageOrchestrator {
     /** Persiste el mensaje entrante y lo marca PROCESSED, sin generar saliente. */
     private Mono<Void> persistInboundOnly(Conversation conversation, String wamid, String text) {
         Message inbound = Message.inbound(conversation.id(), wamid, text);
-        return messageRepository.save(inbound)
+        return conversationRepository.update(conversation.receivedAt(clock.instant()))
+                .then(messageRepository.save(inbound))
                 .then(messageRepository.markReceivedAsProcessed(inbound.id()))
                 .then();
     }
@@ -471,16 +534,23 @@ public class InboundMessageOrchestrator {
     private Mono<Void> persistAll(Conversation base, Conversation updated,
                                   Message inbound, Message outbound,
                                   EngineResult result, String waId) {
-        Mono<Void> saveConversation = conversationRepository.update(updated).then();
+        String payload = payloadBuilder.build(result);
+        // Con reenganche pendiente, el menú suspendido original se conserva intacto:
+        // la pregunta Sí/No no lo reemplaza (「Sí」 debe restaurar el menú, no la pregunta).
+        String promptPayload = updated.reengagementPending()
+                ? updated.lastPromptPayload() : payload;
+        boolean pendingFlag = updated.reengagementPending();
+        Conversation waiting = updated.receivedAt(clock.instant())
+                .awaitingReply(outbound.id(), promptPayload, pendingFlag, updated.reminderAt());
+        OutboxMessage outbox = OutboxMessage.pendingFor(outbound.id(), waiting.id(), waId,
+                payload, Instant.now());
+        Mono<Void> saveConversation = conversationRepository.update(waiting).then();
         Mono<Void> saveInbound = messageRepository.save(inbound).then();
         Mono<Void> saveOutbound = messageRepository.save(outbound).then();
         Mono<Void> saveSelection = result.selection() != null
-                ? selectionRepository.save(result.selection().withConversationId(updated.id())
+                ? selectionRepository.save(result.selection().withConversationId(waiting.id())
                         .withSelectedAt(Instant.now())).then()
                 : Mono.empty();
-        String payload = payloadBuilder.build(result);
-        OutboxMessage outbox = OutboxMessage.pendingFor(outbound.id(), updated.id(), waId,
-                payload, Instant.now());
         return saveConversation
                 .then(saveInbound)
                 .then(saveOutbound)

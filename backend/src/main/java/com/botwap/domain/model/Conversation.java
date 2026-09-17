@@ -20,7 +20,22 @@ public record Conversation(
         long version,
         Instant createdAt,
         Instant updatedAt,
-        Instant closedAt) {
+        Instant closedAt,
+        Instant lastInteractionAt,
+        Instant lastInboundAt,
+        Instant lastBotMessageAt,
+        Instant reminderAt,
+        boolean reengagementPending,
+        String lastPromptPayload,
+        UUID awaitingReplyMessageId) {
+
+    /** Compatibilidad para conversaciones sin actividad registrada todavía. */
+    public Conversation(UUID id, String waId, ConversationState state, ConversationStatus status,
+                        String profileName, long version, Instant createdAt, Instant updatedAt,
+                        Instant closedAt) {
+        this(id, waId, state, status, profileName, version, createdAt, updatedAt, closedAt,
+                updatedAt, null, null, null, false, null, null);
+    }
 
     public Conversation {
         Objects.requireNonNull(id, "id");
@@ -57,23 +72,47 @@ public record Conversation(
 
     public Conversation withState(ConversationState newState) {
         return new Conversation(id, waId, newState, status, profileName, version, createdAt,
-                Instant.now(), closedAt);
+                Instant.now(), closedAt, lastInteractionAt, lastInboundAt, lastBotMessageAt,
+                reminderAt, reengagementPending, lastPromptPayload, awaitingReplyMessageId);
     }
 
     public Conversation withProfileName(String newProfileName) {
         return new Conversation(id, waId, state, status, normalizeProfileName(newProfileName),
-                version, createdAt, Instant.now(), closedAt);
+                version, createdAt, Instant.now(), closedAt, lastInteractionAt, lastInboundAt,
+                lastBotMessageAt, reminderAt, reengagementPending, lastPromptPayload, awaitingReplyMessageId);
     }
 
     public Conversation withStatus(ConversationStatus newStatus) {
         Instant now = Instant.now();
         return new Conversation(id, waId, state, newStatus, profileName, version, createdAt, now,
-                newStatus == ConversationStatus.CLOSED ? now : closedAt);
+                newStatus == ConversationStatus.CLOSED ? now : closedAt, lastInteractionAt,
+                lastInboundAt, lastBotMessageAt, reminderAt, reengagementPending,
+                lastPromptPayload, awaitingReplyMessageId);
     }
 
     public Conversation withVersion(long newVersion) {
         return new Conversation(id, waId, state, status, profileName, newVersion, createdAt,
-                updatedAt, closedAt);
+                updatedAt, closedAt, lastInteractionAt, lastInboundAt, lastBotMessageAt,
+                reminderAt, reengagementPending, lastPromptPayload, awaitingReplyMessageId);
+    }
+
+    /** Un entrante invalida cualquier espera previa, pero conserva el menú suspendido. */
+    public Conversation receivedAt(Instant now) {
+        return new Conversation(id, waId, state, status, profileName, version, createdAt, now,
+                closedAt, now, now, null, null, reengagementPending, lastPromptPayload, null);
+    }
+
+    /** El plazo no comienza hasta que el Outbox confirma el envío de este mensaje. */
+    public Conversation awaitingReply(UUID messageId, String payload, boolean pending, Instant reminder) {
+        return new Conversation(id, waId, state, status, profileName, version, createdAt,
+                Instant.now(), closedAt, lastInteractionAt, lastInboundAt, null, reminder,
+                pending, payload, messageId);
+    }
+
+    public boolean requiresReengagement(Instant now, java.time.Duration delay) {
+        return !isClosed() && !isTerminal() && (reengagementPending
+                || (reminderAt != null && lastBotMessageAt != null
+                && !now.isBefore(reminderAt.plus(delay))));
     }
 
     /** Indica si la conversación está cerrada (no admite nuevas interacciones). */

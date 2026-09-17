@@ -238,8 +238,8 @@ class OutboxPollerIntegrationTest extends BaseIntegrationTest {
     private OutboxMessage createPendingOutbox(String waId) {
         UUID conversationId = UUID.randomUUID();
         databaseClient.sql("""
-                        INSERT INTO conversation (id, wa_id, state, status, version, created_at, updated_at)
-                        VALUES (:id, :waId, 'MAIN_MENU', 'ACTIVE', 0, now(), now())
+                        INSERT INTO conversation (id, wa_id, state, status, version, created_at, updated_at, last_interaction_at)
+                        VALUES (:id, :waId, 'MAIN_MENU', 'ACTIVE', 0, now(), now(), now())
                         """)
                 .bind("id", conversationId)
                 .bind("waId", waId)

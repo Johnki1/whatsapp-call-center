@@ -21,7 +21,8 @@ public interface ReactiveConversationEntityRepository
         extends ReactiveCrudRepository<ConversationEntity, UUID> {
 
     String SELECT_ALL = """
-            SELECT id, wa_id, state, status, profile_name, version, created_at, updated_at, closed_at
+            SELECT id, wa_id, state, status, profile_name, version, created_at, updated_at, closed_at,
+                   last_interaction_at, last_inbound_at, last_bot_message_at, reminder_at, reengagement_pending, last_prompt_payload, awaiting_reply_message_id
             FROM conversation
             """;
 
@@ -34,10 +35,22 @@ public interface ReactiveConversationEntityRepository
     @Query(SELECT_ALL + "WHERE wa_id = :waId ORDER BY created_at DESC, id DESC LIMIT 1 FOR UPDATE")
     Mono<ConversationEntity> findLatestByWaIdForUpdate(@Param("waId") String waId);
 
+    @Query(SELECT_ALL + """
+            WHERE status = 'ACTIVE' AND state NOT IN ('FINAL', 'CANCELLED', 'HUMAN_AGENT')
+              AND reminder_at IS NULL AND NOT reengagement_pending
+              AND last_bot_message_at <= :cutoff AND last_prompt_payload IS NOT NULL
+              AND last_inbound_at > :windowStart
+              AND (last_inbound_at IS NULL OR last_bot_message_at >= last_inbound_at)
+            ORDER BY last_bot_message_at LIMIT :limit FOR UPDATE SKIP LOCKED
+            """)
+    reactor.core.publisher.Flux<ConversationEntity> findReminderDueForUpdate(
+            @Param("cutoff") OffsetDateTime cutoff, @Param("windowStart") OffsetDateTime windowStart,
+            @Param("limit") int limit);
+
     @Modifying
     @Query("""
-            INSERT INTO conversation (id, wa_id, state, status, version, created_at, updated_at, closed_at, profile_name)
-            VALUES (:id, :waId, :state, :status, :version, :createdAt, :updatedAt, :closedAt, :profileName)
+            INSERT INTO conversation (id, wa_id, state, status, version, created_at, updated_at, closed_at, profile_name, last_interaction_at, last_inbound_at, last_bot_message_at, reminder_at, reengagement_pending, last_prompt_payload, awaiting_reply_message_id)
+            VALUES (:id, :waId, :state, :status, :version, :createdAt, :updatedAt, :closedAt, :profileName, :lastInteractionAt, :lastInboundAt, :lastBotMessageAt, :reminderAt, :reengagementPending, :lastPromptPayload, :awaitingReplyMessageId)
             """
     )
     Mono<Integer> insertConversation(@Param("id") UUID id,
@@ -48,7 +61,14 @@ public interface ReactiveConversationEntityRepository
                                      @Param("createdAt") OffsetDateTime createdAt,
                                      @Param("updatedAt") OffsetDateTime updatedAt,
                                      @Param("closedAt") OffsetDateTime closedAt,
-                                     @Param("profileName") String profileName);
+                                     @Param("profileName") String profileName,
+                                     @Param("lastInteractionAt") OffsetDateTime lastInteractionAt,
+                                     @Param("lastInboundAt") OffsetDateTime lastInboundAt,
+                                     @Param("lastBotMessageAt") OffsetDateTime lastBotMessageAt,
+                                     @Param("reminderAt") OffsetDateTime reminderAt,
+                                     @Param("reengagementPending") boolean reengagementPending,
+                                     @Param("lastPromptPayload") String lastPromptPayload,
+                                     @Param("awaitingReplyMessageId") UUID awaitingReplyMessageId);
 
     @Modifying
     @Query("""
@@ -58,7 +78,14 @@ public interface ReactiveConversationEntityRepository
                 version = :newVersion,
                 updated_at = :updatedAt,
                 closed_at = :closedAt,
-                profile_name = COALESCE(:profileName, profile_name)
+                profile_name = COALESCE(:profileName, profile_name),
+                last_interaction_at = :lastInteractionAt,
+                last_inbound_at = :lastInboundAt,
+                last_bot_message_at = :lastBotMessageAt,
+                reminder_at = :reminderAt,
+                reengagement_pending = :reengagementPending,
+                last_prompt_payload = :lastPromptPayload,
+                awaiting_reply_message_id = :awaitingReplyMessageId
             WHERE id = :id AND version = :expectedVersion
             """)
     Mono<Integer> updateConversation(@Param("id") UUID id,
@@ -68,5 +95,12 @@ public interface ReactiveConversationEntityRepository
                                      @Param("updatedAt") OffsetDateTime updatedAt,
                                      @Param("closedAt") OffsetDateTime closedAt,
                                      @Param("profileName") String profileName,
-                                     @Param("expectedVersion") long expectedVersion);
+                                     @Param("expectedVersion") long expectedVersion,
+                                     @Param("lastInteractionAt") OffsetDateTime lastInteractionAt,
+                                     @Param("lastInboundAt") OffsetDateTime lastInboundAt,
+                                     @Param("lastBotMessageAt") OffsetDateTime lastBotMessageAt,
+                                     @Param("reminderAt") OffsetDateTime reminderAt,
+                                     @Param("reengagementPending") boolean reengagementPending,
+                                     @Param("lastPromptPayload") String lastPromptPayload,
+                                     @Param("awaitingReplyMessageId") UUID awaitingReplyMessageId);
 }

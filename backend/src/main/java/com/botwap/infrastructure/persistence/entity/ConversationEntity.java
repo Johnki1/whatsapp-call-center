@@ -30,6 +30,48 @@ public class ConversationEntity {
     @Column("closed_at")
     private Instant closedAt;
 
+    @Column("last_interaction_at")
+    private Instant lastInteractionAt;
+
+    public Instant getLastInteractionAt() { return lastInteractionAt; }
+    public void setLastInteractionAt(Instant value) { this.lastInteractionAt = value; }
+
+    @Column("last_inbound_at")
+    private Instant lastInboundAt;
+
+    public Instant getLastInboundAt() { return lastInboundAt; }
+    public void setLastInboundAt(Instant value) { this.lastInboundAt = value; }
+
+    @Column("last_bot_message_at")
+    private Instant lastBotMessageAt;
+
+    public Instant getLastBotMessageAt() { return lastBotMessageAt; }
+    public void setLastBotMessageAt(Instant value) { this.lastBotMessageAt = value; }
+
+    @Column("reminder_at")
+    private Instant reminderAt;
+
+    public Instant getReminderAt() { return reminderAt; }
+    public void setReminderAt(Instant value) { this.reminderAt = value; }
+
+    @Column("reengagement_pending")
+    private boolean reengagementPending;
+
+    public boolean getReengagementPending() { return reengagementPending; }
+    public void setReengagementPending(boolean value) { this.reengagementPending = value; }
+
+    @Column("last_prompt_payload")
+    private String lastPromptPayload;
+
+    public String getLastPromptPayload() { return lastPromptPayload; }
+    public void setLastPromptPayload(String value) { this.lastPromptPayload = value; }
+
+    @Column("awaiting_reply_message_id")
+    private UUID awaitingReplyMessageId;
+
+    public UUID getAwaitingReplyMessageId() { return awaitingReplyMessageId; }
+    public void setAwaitingReplyMessageId(UUID value) { this.awaitingReplyMessageId = value; }
+
     public ConversationEntity() {
     }
 

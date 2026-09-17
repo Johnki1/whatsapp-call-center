@@ -58,6 +58,11 @@ app:
     lease-duration-seconds: 60
     max-attempts: 3
     backoff-base-seconds: 1
+  # ===== Inactividad y reenganche (BotWap V2) =====
+  inactivity:
+    enabled: true
+    poll-interval-ms: 1000
+    reengagement-delay: ${APP_REENGAGEMENT_DELAY:30m}
   # ===== Gemini AI (Fase V2): coste $0 cuando deshabilitado o sin key =====
   gemini:
     enabled: ${APP_GEMINI_ENABLED:true}

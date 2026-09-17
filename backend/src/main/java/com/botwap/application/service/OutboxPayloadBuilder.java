@@ -67,6 +67,33 @@ public class OutboxPayloadBuilder {
         return serialize(interactivePayload(body, result.options()));
     }
 
+    /** Reconstruye únicamente un payload interno persistido; no ejecuta entradas del usuario. */
+    public EngineResult restore(String payload, com.botwap.domain.model.ConversationState state) {
+        try {
+            var root = objectMapper.readTree(payload);
+            var options = new java.util.ArrayList<InteractiveOption>();
+            var interactive = root.path("interactive");
+            if ("button".equals(interactive.path("type").asText())) {
+                for (var button : interactive.path("action").path("buttons")) {
+                    options.add(new InteractiveOption(button.path("reply").path("id").asText(),
+                            button.path("reply").path("title").asText()));
+                }
+            } else if ("list".equals(interactive.path("type").asText())) {
+                for (var section : interactive.path("action").path("sections")) {
+                    for (var row : section.path("rows")) {
+                        options.add(new InteractiveOption(row.path("id").asText(), row.path("title").asText()));
+                    }
+                }
+            }
+            if (!root.hasNonNull("text")) {
+                throw new IllegalStateException("El menú suspendido no contiene texto");
+            }
+            return EngineResult.menu(root.path("text").asText(), state, null, options);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("No se pudo recuperar el menú suspendido", e);
+        }
+    }
+
     /** Payload interactivo como mapa ordenado (serializable con Jackson). */
     static Map<String, Object> interactivePayload(String body, List<InteractiveOption> options) {
         String prose = truncate(body, MAX_BODY_LENGTH);
