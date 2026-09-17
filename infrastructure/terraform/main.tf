@@ -79,7 +79,7 @@ resource "azurerm_network_security_rule" "ssh" {
   access                      = "Allow"
   protocol                    = "Tcp"
   source_port_range           = "*"
-  source_address_prefix       = var.allowed_ssh_source_cidr
+  source_address_prefixes     = var.allowed_ssh_source_cidr
   destination_port_range      = "22"
   destination_address_prefix  = "*"
 }

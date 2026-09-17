@@ -23,4 +23,4 @@ admin_username           = "azureadmin"
 ssh_public_key           = "ssh-ed25519 AAAA... ejemplo@example.com"
 vnet_address_space       = ["10.20.0.0/16"]
 subnet_address_prefix    = "10.20.1.0/24"
-allowed_ssh_source_cidr  = "190.121.129.156/32"
+allowed_ssh_source_cidr  = "x.x.x.x/32"

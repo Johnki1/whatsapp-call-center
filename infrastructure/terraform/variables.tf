@@ -59,6 +59,6 @@ variable "subnet_address_prefix" {
 
 variable "allowed_ssh_source_cidr" {
   description = "CIDR permitido para acceso SSH (puerto 22) a la VM."
-  type        = string
-  default     = "190.121.129.156/32"
+  type        = list(string)
+  default     = ["190.121.129.156/32","190.121.129.156/32"]
 }
