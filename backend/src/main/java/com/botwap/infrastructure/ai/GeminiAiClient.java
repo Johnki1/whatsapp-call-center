@@ -15,6 +15,7 @@ import reactor.core.publisher.Mono;
 import reactor.netty.http.client.HttpClient;
 
 import java.time.Duration;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -32,6 +33,13 @@ import java.util.Map;
  * respuesta vacía) se degrada a {@link AiReply#empty()} para que el orquestador
  * use la máquina de estados pura: la IA es una mejora, nunca un requisito.</p>
  *
+ * <p>Latencia: los modelos Gemini 3.x razonan internamente antes de responder y
+ * ese razonamiento consume tokens del mismo presupuesto que
+ * {@code maxOutputTokens}. Para una tarea de clasificación como esta, el
+ * razonamiento solo añade segundos de espera, así que se envía
+ * {@code generationConfig.thinkingConfig.thinkingBudget = 0}. El timeout HTTP se
+ * toma de {@link GeminiProperties#timeoutMs()} (25 s por defecto).</p>
+ *
  * <p>La API key nunca se registra en logs.</p>
  */
 @Component
@@ -41,7 +49,10 @@ public class GeminiAiClient implements AiAssistant {
 
     static final String GENERATE_CONTENT_PATH = "/v1beta/models/{model}:generateContent";
     private static final String RESPONSE_MIME_JSON = "application/json";
+    /** Con {@code thinkingBudget=0} los 256 tokens se destinan íntegros a la respuesta JSON. */
     private static final int MAX_OUTPUT_TOKENS = 256;
+    /** Timeout de respaldo (25 s) si la configuración externa no define uno válido. */
+    private static final long DEFAULT_TIMEOUT_MS = 25_000L;
 
     private final GeminiProperties properties;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -61,8 +72,9 @@ public class GeminiAiClient implements AiAssistant {
                 .build();
 
         // Solo configuración NO sensible: la API key nunca se loguea.
-        log.info("GeminiAiClient habilitado={} model={} timeoutMs={}",
-                properties.enabled(), properties.model(), timeoutMs);
+        log.info("GeminiAiClient habilitado={} model={} timeoutMs={} thinkingBudget={}",
+                properties.enabled(), properties.model(), timeoutMs,
+                properties.isThinkingConfigured() ? properties.thinkingBudget() : "omitido");
     }
 
     @Override
@@ -94,18 +106,29 @@ public class GeminiAiClient implements AiAssistant {
                         error.getClass().getSimpleName()));
     }
 
-    /** Cuerpo de la petición generateContent (prompt de sistema + turno del usuario). */
+    /**
+     * Cuerpo de la petición generateContent (prompt de sistema + turno del usuario).
+     *
+     * <p>El razonamiento interno se desactiva con {@code thinkingBudget=0}: en un
+     * clasificador de texto libre solo añade latencia y consume el presupuesto de
+     * {@code maxOutputTokens}.</p>
+     */
     Map<String, Object> requestBody(AiRequest request) {
+        Map<String, Object> generationConfig = new LinkedHashMap<>();
+        generationConfig.put("temperature", 0.4);
+        generationConfig.put("maxOutputTokens", MAX_OUTPUT_TOKENS);
+        generationConfig.put("responseMimeType", RESPONSE_MIME_JSON);
+        if (properties.isThinkingConfigured()) {
+            generationConfig.put("thinkingConfig",
+                    Map.of("thinkingBudget", properties.thinkingBudget()));
+        }
         return Map.of(
                 "systemInstruction", Map.of(
                         "parts", List.of(Map.of("text", systemPrompt(request)))),
                 "contents", List.of(Map.of(
                         "role", "user",
                         "parts", List.of(Map.of("text", request.userText())))),
-                "generationConfig", Map.of(
-                        "temperature", 0.4,
-                        "maxOutputTokens", MAX_OUTPUT_TOKENS,
-                        "responseMimeType", RESPONSE_MIME_JSON));
+                "generationConfig", generationConfig);
     }
 
     /**

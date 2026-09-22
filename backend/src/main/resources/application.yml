@@ -69,7 +69,12 @@ app:
     api-key: ${GEMINI_API_KEY:}
     model: ${GEMINI_MODEL:gemini-3.5-flash-lite}
     base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com}
-    timeout-ms: ${GEMINI_TIMEOUT_MS:8000}
+    # Timeout HTTP de la llamada a Gemini. Los modelos 3.x razonan antes de
+    # responder: con 8 s se producía ReadTimeoutException y el bot caía al
+    # motor local en cada pregunta de texto libre.
+    timeout-ms: ${GEMINI_TIMEOUT_MS:25000}
+    # 0 = sin razonamiento interno (rápido y barato); -1 = omitir el campo.
+    thinking-budget: ${APP_GEMINI_THINKING_BUDGET:0}
 
 # ===== Logging base =====
 logging:

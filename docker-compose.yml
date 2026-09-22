@@ -52,6 +52,11 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       APP_GEMINI_ENABLED: ${APP_GEMINI_ENABLED:-true}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
+      # Sin estas dos líneas, Docker no reenvía las variables al contenedor y
+      # cualquier ajuste en /opt/botwap/.env se ignoraba (se usaba el default
+      # del application.yml: 8 s de timeout, causa del ReadTimeoutException).
+      GEMINI_TIMEOUT_MS: ${GEMINI_TIMEOUT_MS:-25000}
+      APP_GEMINI_THINKING_BUDGET: ${APP_GEMINI_THINKING_BUDGET:-0}
     ports:
       # Publicado SOLO en loopback: Nginx (reverse proxy) es la única
       # puerta de entrada pública. El NSG de Azure bloquea 8080, y este
