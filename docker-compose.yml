@@ -51,7 +51,7 @@ services:
       WHATSAPP_GRAPH_BASE_URL: ${WHATSAPP_GRAPH_BASE_URL:-https://graph.facebook.com}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       APP_GEMINI_ENABLED: ${APP_GEMINI_ENABLED:-true}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash}
       # Sin estas dos líneas, Docker no reenvía las variables al contenedor y
       # cualquier ajuste en /opt/botwap/.env se ignoraba (se usaba el default
       # del application.yml: 8 s de timeout, causa del ReadTimeoutException).
